@@ -21,13 +21,13 @@ Requires [uv](https://docs.astral.sh/uv/). uv downloads Python 3.12 automaticall
 uv sync
 uv run recsys prepare                       # download Food.com and cache it as parquet (~1 min)
 uv run recsys evaluate --stage val          # hyperparameter tuning
-uv run recsys evaluate --stage test         # final numbers
+uv run recsys evaluate --stage test --save test   # final numbers, written to reports/test.md
 uv run recsys evaluate --stage test --restrict vegetarian gluten
 uv run recsys recommend --user 29196 --restrict vegetarian gluten
 uv run pytest
 ```
 
-To compare hyperparameters: `--models itemknn:neighbors=50,shrink=10.0 itemknn:neighbors=50,shrink=200.0`.
+To compare hyperparameters: `--models itemknn:neighbors=50,shrink=10.0 itemknn:neighbors=50,shrink=200.0`. Reports are only written with `--save NAME`, so ad hoc runs never overwrite them.
 
 ## Evaluation protocol
 

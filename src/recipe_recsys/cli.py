@@ -29,6 +29,15 @@ DEFAULT_MODELS = [
     "itemknn",
 ]
 REPORTS_DIR = Path("reports")
+CONTENT_COLUMNS = [
+    "recipe_id",
+    "ingredients",
+    "tags",
+    "minutes",
+    "n_steps",
+    "n_ingredients",
+    *data.NUTRITION_COLUMNS,
+]
 
 
 def _allowed_for(
@@ -52,8 +61,10 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     else:
         train_df, eval_df = pd.concat([split.train, split.val]), split.test
 
+    recipes = data.load_recipes(columns=CONTENT_COLUMNS)
     train = InteractionData.from_frame(k_core(train_df, args.min_user, args.min_item))
-    allowed = _allowed_for(train, data.load_recipes(), args.restrict)
+    train.with_content(recipes)
+    allowed = _allowed_for(train, recipes, args.restrict)
     truth, stats = build_ground_truth(train, eval_df, allowed)
 
     print(
@@ -90,8 +101,9 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     table = results_table(results, ks)
     print("\n" + table)
 
+    if not args.save:
+        return
     REPORTS_DIR.mkdir(exist_ok=True)
-    suffix = f"_{'-'.join(sorted(args.restrict))}" if args.restrict else ""
     report = {
         "stage": args.stage,
         "restrictions": args.restrict,
@@ -99,16 +111,16 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         "cold_start": {**vars(stats), **shares},
         "results": [to_dict(r) for r in results],
     }
-    (REPORTS_DIR / f"{args.stage}{suffix}.json").write_text(
-        json.dumps(report, indent=2, default=str)
-    )
-    (REPORTS_DIR / f"{args.stage}{suffix}.md").write_text(table + "\n")
+    (REPORTS_DIR / f"{args.save}.json").write_text(json.dumps(report, indent=2, default=str))
+    (REPORTS_DIR / f"{args.save}.md").write_text(table + "\n")
+    print(f"\nsaved reports/{args.save}.md")
 
 
 def cmd_recommend(args: argparse.Namespace) -> None:
     interactions = data.load_interactions()
     recipes = data.load_recipes().set_index("recipe_id")
     train = InteractionData.from_frame(k_core(interactions, args.min_user, args.min_item))
+    train.with_content(recipes.reset_index()[CONTENT_COLUMNS])
 
     if args.user not in train.user_index:
         raise SystemExit(f"user {args.user} not found (needs >= {args.min_user} interactions)")
@@ -164,6 +176,7 @@ def main() -> None:
     )
     ev.add_argument("--k", nargs="+", type=int, default=[10, 20])
     ev.add_argument("--restrict", **restrict_kwargs)
+    ev.add_argument("--save", metavar="NAME", help="write reports/NAME.md and reports/NAME.json")
     ev.add_argument("--min-user", type=int, default=5)
     ev.add_argument("--min-item", type=int, default=5)
     ev.set_defaults(func=cmd_evaluate)

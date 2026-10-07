@@ -17,6 +17,8 @@ class InteractionData:
     item_ids: np.ndarray
     # Long format with `user_idx`, `item_idx`, `date` (used by time-aware models).
     interactions: pd.DataFrame
+    # Recipe attributes aligned with `item_ids` (used by content-aware models).
+    item_content: pd.DataFrame | None = None
 
     @classmethod
     def from_frame(cls, df: pd.DataFrame) -> InteractionData:
@@ -32,6 +34,10 @@ class InteractionData:
             {"user_idx": user_codes, "item_idx": item_codes, "date": df["date"].to_numpy()}
         )
         return cls(matrix, np.asarray(user_ids), np.asarray(item_ids), interactions)
+
+    def with_content(self, recipes: pd.DataFrame) -> InteractionData:
+        self.item_content = recipes.set_index("recipe_id").loc[self.item_ids].reset_index()
+        return self
 
     @property
     def n_users(self) -> int:

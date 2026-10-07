@@ -4,7 +4,9 @@ from recipe_recsys.models.baselines import (
     RandomRecommender,
     RecentPopularityRecommender,
 )
+from recipe_recsys.models.ials import IALSRecommender
 from recipe_recsys.models.itemknn import ItemKNNRecommender
+from recipe_recsys.models.two_tower import TwoTowerRecommender
 
 MODELS: dict[str, type[Recommender]] = {
     cls.name: cls
@@ -13,6 +15,8 @@ MODELS: dict[str, type[Recommender]] = {
         PopularityRecommender,
         RecentPopularityRecommender,
         ItemKNNRecommender,
+        IALSRecommender,
+        TwoTowerRecommender,
     ]
 }
 

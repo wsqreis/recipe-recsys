@@ -69,8 +69,8 @@ def prepare(data_dir: Path = DATA_DIR) -> None:
     print(f"recipes: {len(recipes):,} | interactions: {len(interactions):,} -> {data_dir}")
 
 
-def load_recipes(data_dir: Path = DATA_DIR) -> pd.DataFrame:
-    return pd.read_parquet(data_dir / "recipes.parquet")
+def load_recipes(data_dir: Path = DATA_DIR, columns: list[str] | None = None) -> pd.DataFrame:
+    return pd.read_parquet(data_dir / "recipes.parquet", columns=columns)
 
 
 def load_interactions(data_dir: Path = DATA_DIR) -> pd.DataFrame:
