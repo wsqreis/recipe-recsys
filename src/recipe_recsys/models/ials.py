@@ -33,10 +33,10 @@ class IALSRecommender(Recommender):
 
     def __init__(
         self,
-        factors: int = 64,
-        reg: float = 0.1,
-        alpha: float = 10.0,
-        iterations: int = 15,
+        factors: int = 32,
+        reg: float = 100.0,
+        alpha: float = 5.0,
+        iterations: int = 10,
         seed: int = 42,
     ):
         self.factors = factors

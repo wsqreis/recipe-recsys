@@ -49,25 +49,32 @@ def _padded(lists: pd.Series, vocab: dict[str, int]) -> torch.Tensor:
 
 
 class _ItemTower(nn.Module):
-    def __init__(self, n_items: int, n_ingredients: int, n_tags: int, n_numeric: int, dim: int):
+    def __init__(
+        self,
+        n_items: int,
+        n_ingredients: int,
+        n_tags: int,
+        n_numeric: int,
+        dim: int,
+        use_content: bool = True,
+    ):
         super().__init__()
+        self.use_content = use_content
         self.ids = nn.Embedding(n_items, dim)
-        self.ingredients = nn.EmbeddingBag(n_ingredients + 1, dim, mode="mean", padding_idx=0)
-        self.tags = nn.EmbeddingBag(n_tags + 1, dim, mode="mean", padding_idx=0)
-        self.numeric = nn.Linear(n_numeric, dim)
-        self.mlp = nn.Sequential(nn.Linear(4 * dim, 2 * dim), nn.ReLU(), nn.Linear(2 * dim, dim))
+        if use_content:
+            self.ingredients = nn.EmbeddingBag(n_ingredients + 1, dim, mode="mean", padding_idx=0)
+            self.tags = nn.EmbeddingBag(n_tags + 1, dim, mode="mean", padding_idx=0)
+            self.numeric = nn.Linear(n_numeric, dim)
+        n_parts = 4 if use_content else 1
+        self.mlp = nn.Sequential(
+            nn.Linear(n_parts * dim, 2 * dim), nn.ReLU(), nn.Linear(2 * dim, dim)
+        )
 
     def forward(self, items, ingredients, tags, numeric):
-        x = torch.cat(
-            [
-                self.ids(items),
-                self.ingredients(ingredients),
-                self.tags(tags),
-                self.numeric(numeric),
-            ],
-            dim=1,
-        )
-        return F.normalize(self.mlp(x), dim=1)
+        parts = [self.ids(items)]
+        if self.use_content:
+            parts += [self.ingredients(ingredients), self.tags(tags), self.numeric(numeric)]
+        return F.normalize(self.mlp(torch.cat(parts, dim=1)), dim=1)
 
 
 class _UserTower(nn.Module):
@@ -92,12 +99,15 @@ class TwoTowerRecommender(Recommender):
         dim: int = 64,
         epochs: int = 5,
         batch_size: int = 1024,
-        lr: float = 0.003,
+        lr: float = 0.001,
         temperature: float = 0.05,
         max_history: int = 30,
         min_token_count: int = 10,
         seed: int = 42,
         device: str = "auto",
+        # Ablation switches (1 = on, 0 = off).
+        content: int = 1,
+        logq: int = 1,
     ):
         self.dim = dim
         self.epochs = epochs
@@ -108,6 +118,8 @@ class TwoTowerRecommender(Recommender):
         self.min_token_count = min_token_count
         self.seed = seed
         self.device = device
+        self.content = content
+        self.logq = logq
 
     # ---- features -------------------------------------------------------------------------
 
@@ -180,7 +192,7 @@ class TwoTowerRecommender(Recommender):
         histories, targets, self._last_history = self._histories(data)
 
         self._item_tower = _ItemTower(
-            data.n_items, *self._n_vocab, self._numeric.shape[1], self.dim
+            data.n_items, *self._n_vocab, self._numeric.shape[1], self.dim, bool(self.content)
         ).to(dev)
         self._user_tower = _UserTower(data.n_items, self.dim).to(dev)
         params = [*self._item_tower.parameters(), *self._user_tower.parameters()]
@@ -188,6 +200,8 @@ class TwoTowerRecommender(Recommender):
 
         item_freq = np.bincount(targets, minlength=data.n_items) / len(targets)
         log_q = torch.from_numpy(np.log(item_freq + 1e-12).astype(np.float32)).to(dev)
+        if not self.logq:
+            log_q = torch.zeros_like(log_q)
 
         histories_t, targets_t = torch.from_numpy(histories), torch.from_numpy(targets)
         for epoch in range(self.epochs):

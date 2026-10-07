@@ -9,7 +9,7 @@ Data: [Food.com Recipes and Interactions](https://www.kaggle.com/datasets/shuyan
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Data pipeline, temporal split, baselines, metrics, dietary restriction filter | ✅ |
-| 2 | Collaborative filtering with embeddings (iALS, two-tower) | 🚧 models implemented, tuning in progress |
+| 2 | Collaborative filtering with embeddings (iALS, two-tower) and ablations | ✅ |
 | 3 | Content embeddings for cold start, natural-language search with an LLM, weekly meal planning | ⏳ |
 | 4 | API (FastAPI), vector index, deployment, demo (Docker image already available) | ⏳ |
 
@@ -60,27 +60,44 @@ To compare hyperparameters: `--models itemknn:neighbors=50,shrink=10.0 itemknn:n
 - **Cold start is reported, not hidden.** Interactions from users or recipes that do not exist in training cannot be served by collaborative filtering, and their share is printed in every evaluation.
 - **Metrics:** Recall@K, NDCG@K, HitRate@K (binary relevance) and **catalog coverage**, the share of recipes recommended to at least one user.
 
-## Results (test, 2014-02 → 2018-12)
+## Models
 
-Training data: 16,873 users × 39,476 recipes (0.08% density). 2,388 users evaluated.
+| model | idea |
+|---|---|
+| `random`, `popularity`, `recent_popularity` | Non-personalized baselines. Any real model has to beat them. |
+| `itemknn` | "People who cooked X also cooked Y": cosine similarity between recipes, pruned to the top-k neighbors, with shrinkage for pairs seen together only a few times. |
+| `ials` | Implicit ALS matrix factorization (Hu, Koren & Volinsky, 2008, "Collaborative Filtering for Implicit Feedback Datasets") in plain numpy: a 32-dimensional embedding per user and recipe, with unobserved pairs as weak negatives and closed-form alternating updates. |
+| `two_tower` | PyTorch retrieval model. The user tower pools the embeddings of the user's last 30 recipes, so a user with a few interactions gets a vector without retraining. The recipe tower combines an id embedding with ingredients, tags and nutrition. Trained with in-batch softmax and logQ correction (Yi et al., 2019, "Sampling-Bias-Corrected Neural Modeling for Large Corpus Item Recommendations"). |
 
-| model | recall@10 | ndcg@10 | hit_rate@10 | coverage@10 |
+## Results
+
+Hyperparameters were tuned on validation (train → 2011-12, evaluated on 2011-12 → 2014-02). The final configurations were then retrained on train + validation and evaluated **once** on test (2014-02 → 2018-12): 16,873 users × 39,476 recipes in training (0.08% density), 2,388 users evaluated.
+
+| model | NDCG@10 val | NDCG@10 test | vs. popularity (test) | coverage@10 (test) |
 |---|---|---|---|---|
-| random | 0.0007 | 0.0007 | 0.0029 | 45.5% |
-| popularity | 0.0226 | 0.0140 | 0.0582 | 0.1% |
-| recent_popularity (180 days) | 0.0177 | 0.0121 | 0.0523 | 0.1% |
-| itemknn (k=50, shrink=10) | 0.0171 | 0.0129 | 0.0486 | **16.3%** |
-| itemknn (k=50, shrink=50) | 0.0218 | 0.0145 | 0.0540 | 4.0% |
-| itemknn (k=50, shrink=200) | 0.0220 | **0.0154** | **0.0620** | 1.2% |
+| random | 0.0003 | 0.0007 | −95% | 45.5% |
+| popularity | 0.0185 | 0.0140 | — | 0.1% |
+| recent_popularity (180 days) | 0.0191 | 0.0121 | −14% | 0.1% |
+| itemknn (k=50, shrink=10) | 0.0103 | 0.0129 | −8% | **16.3%** |
+| itemknn (k=50, shrink=50) | 0.0148 | 0.0145 | +4% | 4.0% |
+| itemknn (k=50, shrink=200) | 0.0181 | 0.0154 | +10% | 1.2% |
+| **ials** (32 factors) | **0.0196** | **0.0162** | **+16%** | 1.0% |
+| two_tower | 0.0192 | 0.0142 | +1% | 1.7% |
+| two_tower, ablation: no content (ids only) | 0.0151 | 0.0124 | −11% | 1.0% |
+| two_tower, ablation: no logQ correction | 0.0010 | 0.0010 | −93% | 27.0% |
 
-Full tables (including @20) in [reports/](reports/).
+Full tables (recall, hit rate, @20) in [reports/val.md](reports/val.md) and [reports/test.md](reports/test.md).
 
 ### What the numbers show
 
-1. **The popularity baseline is hard to beat.** The most accurate ItemKNN beats it by only 10% on NDCG@10. This is common on sparse data, and it is why no model is reported without baselines.
-2. **Accuracy vs. diversity.** Popularity recommends the same ~40 recipes to everyone (0.1% of the catalog). In ItemKNN, a higher `shrink` improves NDCG but drops coverage from 16% to 1%: the model gradually *becomes* a popularity recommender, because shrinkage favors items with many co-occurrences. Choosing the operating point is a product decision, not just a metric.
-3. **Recent popularity did worse than all-time popularity on test**, even though it was slightly better on validation. The 6-month trend signal did not hold over a 5-year test horizon.
-4. **Cold start dominates.** On test, **79% of interactions come from users who do not exist in training**, and 10% from new recipes. Only 11% of interactions can be evaluated with collaborative filtering. This is the main motivation for phase 3: recommending from recipe *content* and stated preferences.
+1. **The popularity baseline is hard to beat.** The best model, iALS, beats it by 16% on NDCG@10. This is common on sparse data, and it is why no model is reported without baselines.
+2. **The simplest learned model won.** iALS, a 2008 algorithm in about 40 lines of numpy, beat the two-tower network on test. On validation the two were tied (0.0196 vs 0.0192); on test the two-tower dropped to popularity level. It did not hold up over a 5-year horizon, while iALS did. Picking the model on test would have hidden this.
+3. **Less capacity, more regularization.** Every iALS grid step towards fewer factors (128 → 32) and stronger regularization improved validation NDCG. For the two-tower, validation NDCG peaked after 3–5 epochs and then fell (0.0181 → 0.0124 at 10 epochs) while training loss kept dropping: with 0.08% density, extra capacity memorizes noise.
+4. **Accuracy vs. diversity.** Popularity recommends the same ~40 recipes to everyone (0.1% of the catalog). Across models, the configurations with the best NDCG are the ones closest to popularity: in ItemKNN, a higher `shrink` improves NDCG but drops coverage from 16% to 1%, because shrinkage favors items with many co-occurrences. Choosing the operating point is a product decision, not just a metric.
+5. **logQ correction is not optional.** Without it, the two-tower collapses to near-random (−93%). With in-batch negatives, popular recipes show up as negatives far more often than rare ones, so the model learns to push them down and recommends niche recipes (27% coverage). On a dataset where popularity carries this much signal, that destroys the ranking.
+6. **Recipe content helps even when the id is available.** Removing ingredients, tags and nutrition from the two-tower costs 21% on validation and 13% on test. Content will matter even more in phase 3, where it is the only signal for new recipes.
+7. **Recent popularity did worse than all-time popularity on test**, even though it was slightly better on validation. The 6-month trend signal did not hold over a 5-year test horizon.
+8. **Cold start dominates.** On test, **79% of interactions come from users who do not exist in training**, and 10% from new recipes. Only 11% of interactions can be evaluated with collaborative filtering. This is the main motivation for phase 3: recommending from recipe *content* and stated preferences.
 
 ## Dietary restrictions
 
@@ -88,11 +105,13 @@ Restrictions are a **hard filter applied after ranking**, not a score penalty: a
 
 Available restrictions: `vegetarian`, `vegan`, `lactose`, `egg`, `gluten`, `nuts`.
 
-| restriction (test) | allowed catalog | NDCG@10 popularity | NDCG@10 itemknn |
-|---|---|---|---|
-| vegetarian | 57.5% | 0.0152 | 0.0141 |
-| gluten | 45.2% | 0.0205 | 0.0176 |
-| lactose + nuts | 33.2% | 0.0248 | 0.0207 |
+| restriction (test) | allowed catalog | popularity | itemknn | ials | two_tower |
+|---|---|---|---|---|---|
+| vegetarian | 57.5% | 0.0152 | 0.0141 | 0.0150 | **0.0158** |
+| gluten | 45.2% | 0.0205 | 0.0176 | **0.0242** | 0.0215 |
+| lactose + nuts | 33.2% | 0.0248 | 0.0207 | **0.0281** | 0.0211 |
+
+NDCG@10 on test; every model had **0 restriction violations**. The ranking changes with the restriction: the two-tower is best for vegetarians and iALS for the other two.
 
 Design decisions:
 
