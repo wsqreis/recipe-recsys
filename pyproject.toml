@@ -1,0 +1,35 @@
+[project]
+name = "recipe-recsys"
+version = "0.1.0"
+description = "Recipe recommender with hard dietary constraints, offline evaluation and an LLM layer"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "kagglehub>=1.0.2",
+    "numpy>=2.5.3",
+    "pandas>=3.0.6",
+    "pyarrow>=25.0.1",
+    "scipy>=1.18.1",
+]
+
+[project.scripts]
+recsys = "recipe_recsys.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
