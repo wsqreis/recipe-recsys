@@ -9,16 +9,37 @@ Data: [Food.com Recipes and Interactions](https://www.kaggle.com/datasets/shuyan
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Data pipeline, temporal split, baselines, metrics, dietary restriction filter | ✅ |
-| 2 | Collaborative filtering with embeddings (matrix factorization, two-tower) | ⏳ |
+| 2 | Collaborative filtering with embeddings (iALS, two-tower) | 🚧 models implemented, tuning in progress |
 | 3 | Content embeddings for cold start, natural-language search with an LLM, weekly meal planning | ⏳ |
-| 4 | API (FastAPI), vector index, Docker, deployment, demo | ⏳ |
+| 4 | API (FastAPI), vector index, deployment, demo (Docker image already available) | ⏳ |
 
 ## Running
 
-Requires [uv](https://docs.astral.sh/uv/). uv downloads Python 3.12 automatically.
+### With Docker (any OS)
 
 ```bash
-uv sync
+docker compose build recsys
+docker compose run --rm recsys prepare                  # download Food.com into ./data (~1 min)
+docker compose run --rm recsys evaluate --stage test --save test
+docker compose run --rm recsys recommend --user 29196 --restrict vegetarian gluten
+docker compose run --rm --entrypoint pytest recsys -q
+```
+
+With an NVIDIA GPU (Linux with the NVIDIA Container Toolkit, or Windows with Docker Desktop on WSL2), use the `recsys-gpu` service. It installs the CUDA build of PyTorch, and the two-tower model picks up the GPU automatically:
+
+```bash
+docker compose --profile gpu build recsys-gpu
+docker compose run --rm recsys-gpu evaluate --stage val --models two_tower
+```
+
+`data/` and `reports/` are mounted from the host, so downloads and results survive the container.
+
+### Locally with uv
+
+Requires [uv](https://docs.astral.sh/uv/). uv downloads Python 3.12 automatically. PyTorch is an optional extra: pick `cpu` or `cuda` (CUDA 12.6). Without it, every model except `two_tower` still works.
+
+```bash
+uv sync --extra cpu                         # or: uv sync --extra cuda
 uv run recsys prepare                       # download Food.com and cache it as parquet (~1 min)
 uv run recsys evaluate --stage val          # hyperparameter tuning
 uv run recsys evaluate --stage test --save test   # final numbers, written to reports/test.md
@@ -92,7 +113,7 @@ src/recipe_recsys/
   restrictions.py   dietary restrictions (hard filter)
   metrics.py        recall, ndcg, hit rate, coverage
   evaluate.py       evaluation protocol, masking and top-k
-  models/           random, popularity, recent_popularity, itemknn
+  models/           random, popularity, recent_popularity, itemknn, ials, two_tower
   cli.py            recsys prepare | evaluate | recommend
 tests/              metrics, leak-free split, restrictions and regressions
 reports/            evaluation results (.md versioned, .json ignored)

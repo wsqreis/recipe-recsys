@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from recipe_recsys.dataset import InteractionData
 from recipe_recsys.evaluate import build_ground_truth, evaluate, top_k
@@ -92,8 +93,9 @@ def test_evaluate_end_to_end_with_popularity():
 
 
 def test_two_tower_learns_co_occurrence():
+    pytest.importorskip("torch")
     from recipe_recsys.data import NUTRITION_COLUMNS
-    from recipe_recsys.models import TwoTowerRecommender
+    from recipe_recsys.models.two_tower import TwoTowerRecommender
 
     # Users cook A then B, or C then D; user 99 just cooked A and should get B before C/D.
     rows = []

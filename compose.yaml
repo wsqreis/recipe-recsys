@@ -1,0 +1,29 @@
+# CPU:  docker compose run --rm recsys evaluate --stage test
+# GPU:  docker compose run --rm recsys-gpu evaluate --stage test --models two_tower
+services:
+  recsys:
+    build:
+      context: .
+      args:
+        TORCH: cpu
+    image: recipe-recsys:cpu
+    # Write data/ and reports/ as the host user, not root.
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+
+  recsys-gpu:
+    extends: recsys
+    build:
+      args:
+        TORCH: cuda
+    image: recipe-recsys:cuda
+    profiles: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

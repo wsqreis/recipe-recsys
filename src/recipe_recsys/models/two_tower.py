@@ -97,6 +97,7 @@ class TwoTowerRecommender(Recommender):
         max_history: int = 30,
         min_token_count: int = 10,
         seed: int = 42,
+        device: str = "auto",
     ):
         self.dim = dim
         self.epochs = epochs
@@ -106,6 +107,7 @@ class TwoTowerRecommender(Recommender):
         self.max_history = max_history
         self.min_token_count = min_token_count
         self.seed = seed
+        self.device = device
 
     # ---- features -------------------------------------------------------------------------
 
@@ -165,18 +167,27 @@ class TwoTowerRecommender(Recommender):
         torch.manual_seed(self.seed)
         rng = np.random.default_rng(self.seed)
 
+        dev = torch.device(
+            ("cuda" if torch.cuda.is_available() else "cpu")
+            if self.device == "auto"
+            else self.device
+        )
         self._item_features(data.item_content)
+        # Item features are small (~40k rows): keep them on the training device.
+        self._ingredients, self._tags, self._numeric = (
+            t.to(dev) for t in (self._ingredients, self._tags, self._numeric)
+        )
         histories, targets, self._last_history = self._histories(data)
 
         self._item_tower = _ItemTower(
             data.n_items, *self._n_vocab, self._numeric.shape[1], self.dim
-        )
-        self._user_tower = _UserTower(data.n_items, self.dim)
+        ).to(dev)
+        self._user_tower = _UserTower(data.n_items, self.dim).to(dev)
         params = [*self._item_tower.parameters(), *self._user_tower.parameters()]
         optimizer = torch.optim.Adam(params, lr=self.lr)
 
         item_freq = np.bincount(targets, minlength=data.n_items) / len(targets)
-        log_q = torch.from_numpy(np.log(item_freq + 1e-12).astype(np.float32))
+        log_q = torch.from_numpy(np.log(item_freq + 1e-12).astype(np.float32)).to(dev)
 
         histories_t, targets_t = torch.from_numpy(histories), torch.from_numpy(targets)
         for epoch in range(self.epochs):
@@ -184,15 +195,16 @@ class TwoTowerRecommender(Recommender):
             order = torch.from_numpy(rng.permutation(len(targets)))
             for b in range(0, len(order), self.batch_size):
                 idx = order[b : b + self.batch_size]
-                target = targets_t[idx]
-                user_vec = self._user_tower(histories_t[idx])
+                target = targets_t[idx].to(dev)
+                user_vec = self._user_tower(histories_t[idx].to(dev))
                 item_vec = self._encode_items(target)
 
                 logits = user_vec @ item_vec.T / self.temperature - log_q[target]
                 # The same recipe twice in a batch is not a negative for itself.
                 same = target.unsqueeze(0) == target.unsqueeze(1)
-                logits = logits.masked_fill(same & ~torch.eye(len(idx), dtype=torch.bool), -1e9)
-                loss = F.cross_entropy(logits, torch.arange(len(idx)))
+                eye = torch.eye(len(idx), dtype=torch.bool, device=dev)
+                logits = logits.masked_fill(same & ~eye, -1e9)
+                loss = F.cross_entropy(logits, torch.arange(len(idx), device=dev))
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -201,26 +213,34 @@ class TwoTowerRecommender(Recommender):
             if verbose:
                 print(
                     f"  two_tower epoch {epoch + 1}: loss={total / steps:.3f} "
-                    f"({time.perf_counter() - start:.0f}s)"
+                    f"({time.perf_counter() - start:.0f}s on {dev})"
                 )
 
-        self._precompute(data)
+        self._precompute(data, dev)
         return self
 
     @torch.no_grad()
-    def _precompute(self, data: InteractionData, chunk: int = 4096) -> None:
+    def _precompute(self, data: InteractionData, dev: torch.device, chunk: int = 4096) -> None:
         self._item_tower.eval()
         self._user_tower.eval()
-        self._item_vectors = torch.cat(
-            [
-                self._encode_items(torch.arange(s, min(s + chunk, data.n_items)))
-                for s in range(0, data.n_items, chunk)
-            ]
-        ).numpy()
+        self._item_vectors = (
+            torch.cat(
+                [
+                    self._encode_items(torch.arange(s, min(s + chunk, data.n_items), device=dev))
+                    for s in range(0, data.n_items, chunk)
+                ]
+            )
+            .cpu()
+            .numpy()
+        )
         last = torch.from_numpy(self._last_history)
-        self._user_vectors = torch.cat(
-            [self._user_tower(last[s : s + chunk]) for s in range(0, len(last), chunk)]
-        ).numpy()
+        self._user_vectors = (
+            torch.cat(
+                [self._user_tower(last[s : s + chunk].to(dev)) for s in range(0, len(last), chunk)]
+            )
+            .cpu()
+            .numpy()
+        )
 
     def score(self, user_rows: np.ndarray) -> np.ndarray:
         return self._user_vectors[user_rows] @ self._item_vectors.T

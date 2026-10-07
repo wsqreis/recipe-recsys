@@ -10,8 +10,12 @@ dependencies = [
     "pandas>=3.0.6",
     "pyarrow>=25.0.1",
     "scipy>=1.18.1",
-    "torch>=2.14.1",
 ]
+
+# Pick exactly one: `uv sync --extra cpu` or `uv sync --extra cuda`.
+[project.optional-dependencies]
+cpu = ["torch>=2.14.1"]
+cuda = ["torch>=2.14.1"]
 
 [project.scripts]
 recsys = "recipe_recsys.cli:main"
@@ -35,10 +39,21 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.uv]
+conflicts = [[{ extra = "cpu" }, { extra = "cuda" }]]
+
 [tool.uv.sources]
-torch = { index = "pytorch-cpu" }
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu126", extra = "cuda" },
+]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
