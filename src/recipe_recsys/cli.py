@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -12,17 +13,21 @@ import pandas as pd
 from recipe_recsys import data
 from recipe_recsys.dataset import InteractionData
 from recipe_recsys.evaluate import (
+    EvalResult,
+    build_cold_item_slice,
     build_ground_truth,
+    cold_item_pool,
     evaluate,
+    evaluate_cold_items,
     recommend,
     results_table,
     to_dict,
 )
-from recipe_recsys.models import build_model
+from recipe_recsys.models import build_model, get_model_class
 from recipe_recsys.restrictions import RESTRICTIONS, allowed_mask, get_restrictions
 from recipe_recsys.split import k_core, temporal_split
 from recipe_recsys.text import DEFAULT_MODEL as DEFAULT_TEXT_MODEL
-from recipe_recsys.text import build_text_embeddings
+from recipe_recsys.text import build_text_embeddings, load_text_embeddings
 
 DEFAULT_MODELS = [
     "random",
@@ -38,17 +43,30 @@ CONTENT_COLUMNS = [
     "minutes",
     "n_steps",
     "n_ingredients",
+    "submitted",
     *data.NUTRITION_COLUMNS,
 ]
 
 
 def _allowed_for(
-    train: InteractionData, recipes: pd.DataFrame, names: list[str]
+    item_ids: np.ndarray, recipes: pd.DataFrame, names: list[str]
 ) -> np.ndarray | None:
     if not names:
         return None
-    ingredients = recipes.set_index("recipe_id").loc[train.item_ids, "ingredients"]
+    ingredients = recipes.set_index("recipe_id").loc[item_ids, "ingredients"]
     return allowed_mask(ingredients.tolist(), get_restrictions(names))
+
+
+def _text_lookup(
+    recipes: pd.DataFrame, specs: list[str]
+) -> Callable[[np.ndarray], np.ndarray] | None:
+    """recipe ids -> text embeddings, loaded only if one of the models needs them."""
+    if not any(get_model_class(spec.partition(":")[0]).needs_text for spec in specs):
+        return None
+    ids = recipes["recipe_id"].to_numpy()
+    vectors = load_text_embeddings(ids)
+    rows = pd.Index(ids)
+    return lambda item_ids: vectors[rows.get_indexer(item_ids)]
 
 
 def cmd_prepare(_: argparse.Namespace) -> None:
@@ -71,7 +89,10 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     recipes = data.load_recipes(columns=CONTENT_COLUMNS)
     train = InteractionData.from_frame(k_core(train_df, args.min_user, args.min_item))
     train.with_content(recipes)
-    allowed = _allowed_for(train, recipes, args.restrict)
+    text = _text_lookup(recipes, args.models)
+    if text is not None:
+        train.with_text(text(train.item_ids))
+    allowed = _allowed_for(train.item_ids, recipes, args.restrict)
     truth, stats = build_ground_truth(train, eval_df, allowed)
 
     print(
@@ -93,20 +114,50 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         f"| evaluable {shares['evaluable_share']:.1%} ({stats.evaluable_users:,} users)\n"
     )
 
-    ks = tuple(args.k)
-    results = []
-    for spec in args.models:
-        model = build_model(spec).fit(train)
-        result = evaluate(model, train, truth, ks=ks, allowed=allowed)
-        results.append(result)
-        violations = f" | violations={result.restriction_violations}" if allowed is not None else ""
+    cold, cold_allowed, cold_info = None, None, {}
+    if "cold_item" in args.slice:
+        # On val, recipes submitted during the test window do not exist yet.
+        pool = cold_item_pool(train, recipes, split.test_start if args.stage == "val" else None)
+        if text is not None:
+            pool.text = text(pool.item_ids)
+        cold_allowed = _allowed_for(pool.item_ids, recipes, args.restrict)
+        cold = build_cold_item_slice(train, train_df, eval_df, pool, cold_allowed)
+        submitted = pool.content["submitted"].to_numpy()
+        cooked = np.array([i for items in cold.truth.values() for i in items], dtype=np.int64)
+        cold_info = {
+            "candidates": len(pool),
+            "interactions": len(cooked),
+            "users": len(cold.truth),
+            "new_recipe_share": float((submitted[cooked] >= train_df["date"].max()).mean()),
+        }
         print(
-            f"  {result.model}: ndcg@{ks[0]}={result.metrics[f'ndcg@{ks[0]}']:.4f} "
-            f"({result.seconds:.1f}s){violations}"
+            f"cold_item slice: {cold_info['candidates']:,} candidate recipes outside the "
+            f"training catalog | {cold_info['interactions']:,} interactions from "
+            f"{cold_info['users']:,} users | {cold_info['new_recipe_share']:.0%} of them on "
+            "recipes submitted after training ended\n"
         )
 
-    table = results_table(results, ks)
-    print("\n" + table)
+    ks = tuple(args.k)
+    results, cold_results = [], []
+    for spec in args.models:
+        model = build_model(spec).fit(train)
+        if "warm" in args.slice:
+            results.append(evaluate(model, train, truth, ks=ks, allowed=allowed))
+            _print_result(results[-1], ks, allowed)
+        if cold is not None:
+            try:
+                cold_results.append(evaluate_cold_items(model, cold, ks=ks, allowed=cold_allowed))
+            except NotImplementedError as e:
+                print(f"  {model} [cold_item]: n/a ({e})")
+                continue
+            _print_result(cold_results[-1], ks, cold_allowed, "cold_item")
+
+    sections = []
+    if results:
+        sections.append(results_table(results, ks))
+    if cold_results:
+        sections.append("## cold_item\n\n" + results_table(cold_results, ks))
+    print("\n" + "\n\n".join(sections))
 
     if not args.save:
         return
@@ -118,9 +169,22 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         "cold_start": {**vars(stats), **shares},
         "results": [to_dict(r) for r in results],
     }
+    if cold is not None:
+        report["cold_item"] = {**cold_info, "results": [to_dict(r) for r in cold_results]}
     (REPORTS_DIR / f"{args.save}.json").write_text(json.dumps(report, indent=2, default=str))
-    (REPORTS_DIR / f"{args.save}.md").write_text(table + "\n")
+    (REPORTS_DIR / f"{args.save}.md").write_text("\n\n".join(sections) + "\n")
     print(f"\nsaved reports/{args.save}.md")
+
+
+def _print_result(
+    result: EvalResult, ks: tuple[int, ...], allowed: np.ndarray | None, label: str = ""
+) -> None:
+    violations = f" | violations={result.restriction_violations}" if allowed is not None else ""
+    tag = f" [{label}]" if label else ""
+    print(
+        f"  {result.model}{tag}: ndcg@{ks[0]}={result.metrics[f'ndcg@{ks[0]}']:.4f} "
+        f"({result.seconds:.1f}s){violations}"
+    )
 
 
 def cmd_recommend(args: argparse.Namespace) -> None:
@@ -128,6 +192,9 @@ def cmd_recommend(args: argparse.Namespace) -> None:
     recipes = data.load_recipes().set_index("recipe_id")
     train = InteractionData.from_frame(k_core(interactions, args.min_user, args.min_item))
     train.with_content(recipes.reset_index()[CONTENT_COLUMNS])
+    text = _text_lookup(recipes.reset_index(), [args.model])
+    if text is not None:
+        train.with_text(text(train.item_ids))
 
     if args.user not in train.user_index:
         raise SystemExit(f"user {args.user} not found (needs >= {args.min_user} interactions)")
@@ -139,7 +206,7 @@ def cmd_recommend(args: argparse.Namespace) -> None:
         print(f"  - {recipes.at[train.item_ids[item], 'name']}")
 
     restrict_df = recipes.reset_index()
-    allowed = _allowed_for(train, restrict_df, args.restrict)
+    allowed = _allowed_for(train.item_ids, restrict_df, args.restrict)
     model = build_model(args.model).fit(train)
     [recs] = recommend(model, train, np.array([row]), args.n, allowed)
 
@@ -185,6 +252,14 @@ def main() -> None:
         nargs="+",
         default=DEFAULT_MODELS,
         help="model specs, e.g. itemknn:neighbors=50,shrink=5.0",
+    )
+    ev.add_argument(
+        "--slice",
+        nargs="+",
+        choices=["warm", "cold_item"],
+        default=["warm"],
+        help="warm: known users x training catalog. cold_item: known users x recipes "
+        "outside the training catalog (only content-aware models can score them)",
     )
     ev.add_argument("--k", nargs="+", type=int, default=[10, 20])
     ev.add_argument("--restrict", **restrict_kwargs)

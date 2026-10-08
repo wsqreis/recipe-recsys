@@ -2,10 +2,12 @@ from importlib import import_module
 
 from recipe_recsys.models.base import Recommender
 from recipe_recsys.models.baselines import (
+    NewestRecommender,
     PopularityRecommender,
     RandomRecommender,
     RecentPopularityRecommender,
 )
+from recipe_recsys.models.content import TextProfileRecommender
 from recipe_recsys.models.ials import IALSRecommender
 from recipe_recsys.models.itemknn import ItemKNNRecommender
 
@@ -15,8 +17,10 @@ MODELS: dict[str, str] = {
     "random": "baselines:RandomRecommender",
     "popularity": "baselines:PopularityRecommender",
     "recent_popularity": "baselines:RecentPopularityRecommender",
+    "newest": "baselines:NewestRecommender",
     "itemknn": "itemknn:ItemKNNRecommender",
     "ials": "ials:IALSRecommender",
+    "text_profile": "content:TextProfileRecommender",
     "two_tower": "two_tower:TwoTowerRecommender",
 }
 
@@ -56,10 +60,12 @@ __all__ = [
     "MODELS",
     "IALSRecommender",
     "ItemKNNRecommender",
+    "NewestRecommender",
     "PopularityRecommender",
     "RandomRecommender",
     "RecentPopularityRecommender",
     "Recommender",
+    "TextProfileRecommender",
     "build_model",
     "get_model_class",
 ]

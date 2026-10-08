@@ -3,8 +3,21 @@ import pandas as pd
 import pytest
 
 from recipe_recsys.dataset import InteractionData
-from recipe_recsys.evaluate import build_ground_truth, evaluate, top_k
-from recipe_recsys.models import IALSRecommender, ItemKNNRecommender, PopularityRecommender
+from recipe_recsys.evaluate import (
+    build_cold_item_slice,
+    build_ground_truth,
+    cold_item_pool,
+    evaluate,
+    evaluate_cold_items,
+    top_k,
+)
+from recipe_recsys.models import (
+    IALSRecommender,
+    ItemKNNRecommender,
+    NewestRecommender,
+    PopularityRecommender,
+    TextProfileRecommender,
+)
 from recipe_recsys.split import k_core, temporal_split
 
 
@@ -119,3 +132,69 @@ def test_two_tower_learns_co_occurrence():
     scores = model.score(np.array([data.user_index[99]]))[0]
     item = {recipe: i for i, recipe in enumerate(data.item_ids)}
     assert scores[item["B"]] > max(scores[item["C"]], scores[item["D"]])
+
+
+def _cold_setup():
+    # Training catalog: A, B (k-core survivors). X was cooked by user 1 in the raw training
+    # window but dropped by the k-core; N1/N2 are new; F is submitted after the window ends.
+    train_df = pd.DataFrame(
+        {"user_id": [1, 1, 2, 1], "recipe_id": ["A", "B", "A", "X"], "date": pd.Timestamp(0)}
+    )
+    train = InteractionData.from_frame(train_df.iloc[:3])
+    recipes = pd.DataFrame(
+        {
+            "recipe_id": ["A", "B", "X", "N1", "N2", "F"],
+            "submitted": pd.to_datetime(["2000", "2000", "2000", "2010", "2011", "2030"]),
+        }
+    )
+    return train, train_df, recipes
+
+
+def test_cold_item_pool_excludes_catalog_and_future_recipes():
+    train, _, recipes = _cold_setup()
+    pool = cold_item_pool(train, recipes, available_before=pd.Timestamp("2020"))
+    assert pool.item_ids.tolist() == ["X", "N1", "N2"]
+
+
+def test_cold_item_slice_excludes_seen_and_unknown_users():
+    train, train_df, recipes = _cold_setup()
+    pool = cold_item_pool(train, recipes, available_before=pd.Timestamp("2020"))
+    eval_df = pd.DataFrame(
+        {
+            "user_id": [1, 1, 2, 9, 2],
+            # seen before the k-core, valid, valid, cold user, warm recipe (other slice)
+            "recipe_id": ["X", "N1", "N2", "N1", "B"],
+            "date": pd.Timestamp(1),
+        }
+    )
+    cold = build_cold_item_slice(train, train_df, eval_df, pool)
+    pos = {r: i for i, r in enumerate(pool.item_ids)}
+    assert cold.truth == {
+        train.user_index[1]: {pos["N1"]},
+        train.user_index[2]: {pos["N2"]},
+    }
+
+
+def test_text_profile_ranks_new_recipes_by_content():
+    train, train_df, recipes = _cold_setup()
+    # 2-d "text embeddings": A and B point one way, N1 the same way, N2 the other way.
+    train.with_text(np.array([[1, 0], [1, 0]], dtype=np.float32))
+    pool = cold_item_pool(train, recipes, available_before=pd.Timestamp("2020"))
+    pool.text = np.array([[0.6, 0.8], [1, 0], [0, 1]], dtype=np.float32)
+    eval_df = pd.DataFrame({"user_id": [1, 2], "recipe_id": ["N1", "N1"], "date": pd.Timestamp(1)})
+    cold = build_cold_item_slice(train, train_df, eval_df, pool)
+
+    result = evaluate_cold_items(TextProfileRecommender().fit(train), cold, ks=(1,))
+    assert result.metrics["hit_rate@1"] == 1.0
+
+    with pytest.raises(NotImplementedError):
+        evaluate_cold_items(PopularityRecommender().fit(train), cold, ks=(1,))
+
+
+def test_newest_scores_by_submission_date():
+    train, _, recipes = _cold_setup()
+    train.with_content(recipes)
+    pool = cold_item_pool(train, recipes, available_before=pd.Timestamp("2020"))
+    model = NewestRecommender().fit(train)
+    [ranked] = top_k(model.score_items(np.array([0]), pool), k=3)
+    assert pool.item_ids[ranked].tolist() == ["N2", "N1", "X"]

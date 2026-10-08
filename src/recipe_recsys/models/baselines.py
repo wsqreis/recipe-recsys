@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from recipe_recsys.dataset import InteractionData
+from recipe_recsys.dataset import InteractionData, ItemPool
 from recipe_recsys.models.base import Recommender
 
 
@@ -22,6 +22,36 @@ class RandomRecommender(Recommender):
 
     def score(self, user_rows: np.ndarray) -> np.ndarray:
         return self._rng.random((len(user_rows), self._n_items), dtype=np.float32)
+
+    def score_items(self, user_rows: np.ndarray, pool: ItemPool) -> np.ndarray:
+        return self._rng.random((len(user_rows), len(pool)), dtype=np.float32)
+
+
+def _days(submitted: pd.Series) -> np.ndarray:
+    return (submitted.to_numpy() - np.datetime64("1970-01-01")) / np.timedelta64(1, "D")
+
+
+class NewestRecommender(Recommender):
+    """Most recently submitted recipes first.
+
+    Needs no interactions, so unlike popularity it can rank recipes that were
+    never cooked: the baseline that content models must beat on cold items.
+    """
+
+    name = "newest"
+
+    def fit(self, data: InteractionData) -> NewestRecommender:
+        if data.item_content is None or "submitted" not in data.item_content:
+            raise ValueError("newest needs recipe content with a `submitted` date")
+        self._scores = _days(data.item_content["submitted"]).astype(np.float32)
+        return self
+
+    def score(self, user_rows: np.ndarray) -> np.ndarray:
+        return np.broadcast_to(self._scores, (len(user_rows), len(self._scores))).copy()
+
+    def score_items(self, user_rows: np.ndarray, pool: ItemPool) -> np.ndarray:
+        scores = _days(pool.content["submitted"]).astype(np.float32)
+        return np.broadcast_to(scores, (len(user_rows), len(scores))).copy()
 
 
 class PopularityRecommender(Recommender):

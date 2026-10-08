@@ -19,6 +19,8 @@ class InteractionData:
     interactions: pd.DataFrame
     # Recipe attributes aligned with `item_ids` (used by content-aware models).
     item_content: pd.DataFrame | None = None
+    # Unit-norm text embeddings aligned with `item_ids` (see recipe_recsys.text).
+    item_text: np.ndarray | None = None
 
     @classmethod
     def from_frame(cls, df: pd.DataFrame) -> InteractionData:
@@ -39,6 +41,10 @@ class InteractionData:
         self.item_content = recipes.set_index("recipe_id").loc[self.item_ids].reset_index()
         return self
 
+    def with_text(self, vectors: np.ndarray) -> InteractionData:
+        self.item_text = vectors
+        return self
+
     @property
     def n_users(self) -> int:
         return self.matrix.shape[0]
@@ -54,3 +60,19 @@ class InteractionData:
     @cached_property
     def item_index(self) -> dict[int, int]:
         return {int(r): i for i, r in enumerate(self.item_ids)}
+
+
+@dataclass
+class ItemPool:
+    """Recipes outside the training catalog that a model may still be asked to rank.
+
+    Collaborative models have nothing to say about them; content-aware models
+    score them from `content` and `text`, which are aligned with `item_ids`.
+    """
+
+    item_ids: np.ndarray
+    content: pd.DataFrame
+    text: np.ndarray | None = None
+
+    def __len__(self) -> int:
+        return len(self.item_ids)
