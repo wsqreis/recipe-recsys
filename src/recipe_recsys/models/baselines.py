@@ -24,7 +24,10 @@ class RandomRecommender(Recommender):
         return self._rng.random((len(user_rows), self._n_items), dtype=np.float32)
 
     def score_items(self, user_rows: np.ndarray, pool: ItemPool) -> np.ndarray:
-        return self._rng.random((len(user_rows), len(pool)), dtype=np.float32)
+        # Seeded per batch so the result does not depend on what was scored before
+        # (e.g. whether the warm slice ran first).
+        rng = np.random.default_rng([self.seed, *user_rows[:1].tolist(), len(user_rows)])
+        return rng.random((len(user_rows), len(pool)), dtype=np.float32)
 
 
 def _days(submitted: pd.Series) -> np.ndarray:
