@@ -10,7 +10,7 @@ Data: [Food.com Recipes and Interactions](https://www.kaggle.com/datasets/shuyan
 |---|---|---|
 | 1 | Data pipeline, temporal split, baselines, metrics, dietary restriction filter | ✅ |
 | 2 | Collaborative filtering with embeddings (iALS, two-tower) and ablations | ✅ |
-| 3 | Content embeddings for cold start (new recipes ✅, new users next), natural-language search with an LLM, weekly meal planning | ⏳ |
+| 3 | Content embeddings for cold start (new recipes ✅, new users next), natural-language search with a local LLM ✅, measuring the restriction filter, weekly meal planning | ⏳ |
 | 4 | API (FastAPI), vector index, deployment, demo (Docker image already available) | ⏳ |
 
 ## Running
@@ -133,6 +133,46 @@ What this shows:
 
 These models have not been run on test yet: their configuration is not final, and new **users** (the 79%) are the next step.
 
+## Natural-language search (phase 3)
+
+```bash
+# Ollama must be running on the host with the model pulled: `ollama pull ministral-3:8b`
+docker compose run --rm recsys search "algo sem lactose, com frango, em 20 min"
+```
+
+```
+parsed: {"restrictions": ["lactose"], "include": ["chicken"], "exclude": [], "max_minutes": 20, "query": "quick chicken dish"}
+   1. easy sweet and sour chicken  [20 min]  (chicken breast, brown sugar, pineapple chunks, vinegar, soy sauce, cornstarch)
+   2. quick   easy chicken in wine sauce  [17 min]  (boneless skinless chicken breasts, olive oil, green onions, garlic, ...)
+```
+
+How it works:
+
+1. **A local LLM parses the request, it does not decide.** `ministral-3:8b` (6 GB, fits an 8 GB GPU) runs in [Ollama](https://ollama.com) and turns the request, in any language, into a JSON query constrained by a schema: restrictions, required and excluded ingredients, time limit, and an English description of the dish. ~1.2 s per request.
+2. **Retrieval** ranks all 231k recipes by cosine similarity between the description and the recipe text embeddings.
+3. **Every constraint is a hard filter applied after ranking**, with the same rule-based restriction filter as the recommender. The LLM never judges whether a recipe is safe.
+4. **Two safety nets around the LLM.** A keyword detector runs on the raw request and its restrictions are added to the LLM's. And an excluded term that names a whole category ("meat", "dairy", "eggs") becomes the restriction, because a word filter on "meat" still lets chicken and fish through.
+
+Evaluated on hand-labeled requests in Portuguese and English (`recsys eval-search`):
+
+| | development set, v1 (42 requests) | held-out set, v1 → v2 (30 requests) |
+|---|---|---|
+| restriction recall, LLM + keywords | 97% (keywords alone: 84%) | 100% → 100% (keywords alone: 67%) |
+| restriction precision | 100% | 88% → **95%** |
+| results violating a restriction the user stated | **8 of 399** | 0 of 299 → 0 of 300 |
+| time limit parsed correctly | 100% | 100% → 100% |
+| required ingredients parsed correctly | 86% | 87% → 87% |
+
+Reports: [search_v1](reports/search_v1.md), [search_v1_holdout](reports/search_v1_holdout.md), [search_v2_holdout](reports/search_v2_holdout.md).
+
+What this shows:
+
+1. **The LLM understands what keywords cannot.** "I don't eat animal products", "nada de laticínios" and "my son can't have milk" have no fixed phrase to match. Keywords alone missed a third of the held-out restrictions.
+2. **The dangerous failure looks reasonable.** All 8 unsafe results in v1 came from one request, "algo leve, não como carne" (I don't eat meat), parsed as "exclude the ingredient *meat*". Chicken passed the filter. v2's category rule closes this without relying on the LLM getting it right.
+3. **The LLM also errs the other way.** On the held-out set, v1 turned "no butter" into lactose intolerance, "no pork" into vegetarian and "omelet without onion" into egg-free. Those are safe but hide what the user asked for. A prompt rule ("leaving out one ingredient is not a restriction") cut them from 3 to 1.
+4. **Measured honestly.** The v2 changes came from reading v1's errors on the development set, so v2 numbers on that set (100% recall, 0 violations, [search_v2](reports/search_v2.md)) are optimistic. The held-out set was written and committed before changing the parser, and is the number to trust. It is small (30 requests), so it shows the direction, not a guarantee.
+5. **Required ingredients are ambiguous, not unsafe.** Is "carrot" required in "bolo de cenoura" (carrot cake), or just the dish name? Both readings are defensible, and the label itself is the problem. This affects how narrow the search is, not safety.
+
 ## Dietary restrictions
 
 Restrictions are a **hard filter applied after ranking**, not a score penalty: a forbidden recipe never shows up, however high it scores.
@@ -165,11 +205,13 @@ src/recipe_recsys/
   dataset.py        sparse user × recipe matrix and id mappings
   restrictions.py   dietary restrictions (hard filter)
   text.py           sentence embeddings of recipe text (cached)
+  search.py         natural-language search: LLM parse (Ollama) + retrieval + hard filters
+  search_eval.py    parsing and safety metrics on labeled requests (evaluation/)
   metrics.py        recall, ndcg, hit rate, coverage
   evaluate.py       evaluation protocol, slices, masking, top-k, bootstrap intervals
   models/           random, popularity, recent_popularity, newest, itemknn, ials,
                     text_profile, two_tower
-  cli.py            recsys prepare | embed | evaluate | recommend
+  cli.py            recsys prepare | embed | evaluate | recommend | search | eval-search
 tests/              metrics, leak-free split, restrictions and regressions
 reports/            evaluation results (.md versioned, .json ignored)
 ```
