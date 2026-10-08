@@ -29,6 +29,14 @@ from recipe_recsys.evaluate import (
     to_dict,
 )
 from recipe_recsys.models import Recommender, build_model
+from recipe_recsys.restriction_eval import (
+    DEFAULT_LABELS,
+    LLMClassifier,
+    evaluate_restrictions,
+    keyword_forbidden,
+    load_labels,
+    scores_markdown,
+)
 from recipe_recsys.restrictions import RESTRICTIONS, allowed_mask, get_restrictions
 from recipe_recsys.search import (
     DEFAULT_LLM,
@@ -116,6 +124,36 @@ def cmd_eval_search(args: argparse.Namespace) -> None:
     queries = load_queries(Path(args.queries))
     report = evaluate_search(queries, OllamaParser(args.llm), _searcher())
     text = f"LLM: {args.llm}\n\n" + report.markdown()
+    print(text)
+    if args.save:
+        REPORTS_DIR.mkdir(exist_ok=True)
+        (REPORTS_DIR / f"{args.save}.md").write_text(text + "\n", encoding="utf-8")
+        print(f"\nsaved reports/{args.save}.md")
+
+
+def cmd_eval_restrictions(args: argparse.Namespace) -> None:
+    labels = load_labels(Path(args.labels))
+    recipes = data.load_recipes(columns=["recipe_id", "name", "ingredients"])
+    llm = LLMClassifier(OllamaParser(args.llm))
+    # The LLM is called once per recipe and reused by the union.
+    cache: dict[tuple[str, ...], set[str]] = {}
+
+    def llm_forbidden(name: str, ingredients: list[str]) -> set[str]:
+        key = (name, *ingredients)
+        if key not in cache:
+            cache[key] = llm.forbidden(name, ingredients)
+        return cache[key]
+
+    classifiers = {
+        "keywords (current filter)": lambda name, ingredients: keyword_forbidden(ingredients),
+        f"LLM ({args.llm})": llm_forbidden,
+        # Forbidden if either says so: errors pushed to the safe side.
+        "keywords + LLM": lambda name, ingredients: (
+            keyword_forbidden(ingredients) | llm_forbidden(name, ingredients)
+        ),
+    }
+    scores = evaluate_restrictions(labels, recipes, classifiers)
+    text = scores_markdown(scores, len(labels))
     print(text)
     if args.save:
         REPORTS_DIR.mkdir(exist_ok=True)
@@ -357,6 +395,14 @@ def main() -> None:
     es.add_argument("--llm", default=DEFAULT_LLM)
     es.add_argument("--save", metavar="NAME", help="write reports/NAME.md")
     es.set_defaults(func=cmd_eval_search)
+
+    er = sub.add_parser(
+        "eval-restrictions", help="measure the restriction filter against labeled recipes"
+    )
+    er.add_argument("--labels", default=str(DEFAULT_LABELS))
+    er.add_argument("--llm", default=DEFAULT_LLM, help="Ollama model used as a classifier")
+    er.add_argument("--save", metavar="NAME", help="write reports/NAME.md")
+    er.set_defaults(func=cmd_eval_restrictions)
 
     rec = sub.add_parser("recommend", help="recommend recipes for one user")
     rec.add_argument("--user", type=int, required=True)
