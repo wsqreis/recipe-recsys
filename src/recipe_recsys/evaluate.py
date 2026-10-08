@@ -128,7 +128,7 @@ def evaluate(
     allowed: np.ndarray | None = None,
     batch_size: int = 512,
 ) -> EvalResult:
-    return _evaluate_rankings(
+    return evaluate_rankings(
         repr(model),
         lambda batch: recommend(model, train, batch, max(ks), allowed),
         truth,
@@ -139,7 +139,7 @@ def evaluate(
     )
 
 
-def _evaluate_rankings(
+def evaluate_rankings(
     model_name: str,
     rank: Callable[[np.ndarray], list[np.ndarray]],
     truth: dict[int, set[int]],
@@ -290,7 +290,7 @@ def evaluate_new_items(
             scores[:, ~allowed] = -np.inf
         return top_k(scores, max(ks))
 
-    return _evaluate_rankings(repr(model), rank, new.truth, len(new.pool), ks, allowed, batch_size)
+    return evaluate_rankings(repr(model), rank, new.truth, len(new.pool), ks, allowed, batch_size)
 
 
 # ---- new users ---------------------------------------------------------------------------
@@ -360,7 +360,7 @@ def evaluate_new_users(
         return top_k(scores, max(ks))
 
     n_items = new.histories.shape[1]
-    return _evaluate_rankings(repr(model), rank, new.truth, n_items, ks, allowed, batch_size)
+    return evaluate_rankings(repr(model), rank, new.truth, n_items, ks, allowed, batch_size)
 
 
 def results_table(results: list[EvalResult], ks: tuple[int, ...]) -> str:

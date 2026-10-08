@@ -122,6 +122,35 @@ def cmd_search(args: argparse.Namespace) -> None:
         print(f"  {rank:2}. {row.name}  [{row.minutes} min]  ({ingredients})")
 
 
+MENU_GRID = [(0.0, 0.0), (0.25, 0.0), (0.5, 0.0), (1.0, 0.0), (0.0, 0.3), (0.0, 0.6), (0.5, 0.3)]
+
+
+def cmd_eval_menu(args: argparse.Namespace) -> None:
+    from recipe_recsys.menu import MenuConfig, evaluate_menus, ingredient_matrix, menu_table
+
+    split = temporal_split(data.load_interactions())
+    train_df, eval_df = (
+        (split.train, split.val)
+        if args.stage == "val"
+        else (pd.concat([split.train, split.val]), split.test)
+    )
+    recipes = data.load_recipes(columns=CONTENT_COLUMNS)
+    train = InteractionData.from_frame(k_core(train_df)).with_content(recipes)
+    truth, _ = build_ground_truth(train, eval_df)
+    text = load_text_embeddings(train.item_ids)
+    ingredients, _ = ingredient_matrix(train.item_content["ingredients"].tolist())
+
+    model = build_model(args.model).fit(train)
+    configs = [MenuConfig(size=args.size, variety=v, reuse=r) for v, r in MENU_GRID]
+    table = menu_table(evaluate_menus(model, train, truth, configs, ingredients, text))
+    text_out = f"stage={args.stage} | model={model} | {len(truth):,} users\n\n{table}"
+    print(text_out)
+    if args.save:
+        REPORTS_DIR.mkdir(exist_ok=True)
+        (REPORTS_DIR / f"{args.save}.md").write_text(text_out + "\n", encoding="utf-8")
+        print(f"\nsaved reports/{args.save}.md")
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     import uvicorn
 
@@ -427,6 +456,13 @@ def main() -> None:
         "--no-llm", action="store_true", help="skip the LLM: keyword restrictions + raw text"
     )
     se.set_defaults(func=cmd_search)
+
+    em = sub.add_parser("eval-menu", help="what weekly-menu planning costs in accuracy")
+    em.add_argument("--stage", choices=["val", "test"], default="val")
+    em.add_argument("--model", default="ials")
+    em.add_argument("--size", type=int, default=7)
+    em.add_argument("--save", metavar="NAME", help="write reports/NAME.md")
+    em.set_defaults(func=cmd_eval_menu)
 
     sv = sub.add_parser("serve", help="HTTP API and web app (needs the `api` extra)")
     sv.add_argument("--host", default="127.0.0.1")
