@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -14,12 +15,15 @@ from recipe_recsys import data
 from recipe_recsys.dataset import InteractionData
 from recipe_recsys.evaluate import (
     EvalResult,
+    PairedDifference,
     build_ground_truth,
     build_new_item_slice,
     evaluate,
     evaluate_new_items,
     format_ci,
     new_item_pool,
+    paired_difference,
+    paired_table,
     recommend,
     results_table,
     to_dict,
@@ -150,11 +154,20 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
                 continue
             _print_result(new_results[-1], ks, new_allowed, "new_item")
 
+    baselines = [repr(build_model(spec)) for spec in args.baseline]
+    paired = {
+        "warm": _paired(results, baselines, f"ndcg@{ks[0]}"),
+        "new_item": _paired(new_results, baselines, f"ndcg@{ks[0]}"),
+    }
     sections = []
     if results:
         sections.append(results_table(results, ks))
+        if paired["warm"]:
+            sections.append(paired_table(paired["warm"]))
     if new_results:
         sections.append("## new_item\n\n" + results_table(new_results, ks))
+        if paired["new_item"]:
+            sections.append(paired_table(paired["new_item"]))
     print("\n" + "\n\n".join(sections))
 
     if not args.save:
@@ -166,12 +179,26 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         "train": {"users": train.n_users, "items": train.n_items, "interactions": train.matrix.nnz},
         "cold_start": {**vars(stats), **shares},
         "results": [to_dict(r) for r in results],
+        "paired": [asdict(d) for d in paired["warm"]],
     }
     if new is not None:
-        report["new_item"] = {**new_info, "results": [to_dict(r) for r in new_results]}
+        report["new_item"] = {
+            **new_info,
+            "results": [to_dict(r) for r in new_results],
+            "paired": [asdict(d) for d in paired["new_item"]],
+        }
     (REPORTS_DIR / f"{args.save}.json").write_text(json.dumps(report, indent=2, default=str))
     (REPORTS_DIR / f"{args.save}.md").write_text("\n\n".join(sections) + "\n")
     print(f"\nsaved reports/{args.save}.md")
+
+
+def _paired(results: list[EvalResult], baselines: list[str], metric: str) -> list[PairedDifference]:
+    """Compare every model with the first of `baselines` that was evaluated on this slice."""
+    by_name = {r.model: r for r in results}
+    base = next((by_name[name] for name in baselines if name in by_name), None)
+    if base is None:
+        return []
+    return [paired_difference(r, base, metric) for r in results if r is not base]
 
 
 def _print_result(
@@ -260,6 +287,14 @@ def main() -> None:
         default=["warm"],
         help="warm: known users x training catalog. new_item: known users x recipes "
         "submitted during the evaluated window (only content-aware models can score them)",
+    )
+    ev.add_argument(
+        "--baseline",
+        nargs="+",
+        default=[],
+        metavar="SPEC",
+        help="report each model's paired difference to the first of these model specs "
+        "evaluated on each slice, e.g. `--baseline popularity random`",
     )
     ev.add_argument("--k", nargs="+", type=int, default=[10, 20])
     ev.add_argument("--restrict", **restrict_kwargs)

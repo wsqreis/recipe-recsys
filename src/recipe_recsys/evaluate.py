@@ -53,6 +53,8 @@ class EvalResult:
     extra: dict[str, float] = field(default_factory=dict)
     # 95% bootstrap interval per metric (over users), see bootstrap_ci.
     ci: dict[str, tuple[float, float]] = field(default_factory=dict)
+    # Metric value per evaluated user, in sorted user order (for paired comparisons).
+    per_user: dict[str, np.ndarray] = field(default_factory=dict, repr=False)
 
 
 def top_k(scores: np.ndarray, k: int) -> list[np.ndarray]:
@@ -172,7 +174,8 @@ def _evaluate_rankings(
         all_recs.extend(recs)
 
     n = max(len(users), 1)
-    results = {key: sum(values) / n for key, values in per_user.items()}
+    values = {key: np.asarray(v) for key, v in per_user.items()}
+    results = {key: float(v.sum() / n) for key, v in values.items()}
     for k in ks:
         results[f"coverage@{k}"] = metrics.catalog_coverage([r[:k] for r in all_recs], n_items)
     return EvalResult(
@@ -180,7 +183,8 @@ def _evaluate_rankings(
         metrics=results,
         restriction_violations=violations,
         seconds=time.perf_counter() - start,
-        ci={key: bootstrap_ci(np.asarray(values)) for key, values in per_user.items()},
+        ci={key: bootstrap_ci(v) for key, v in values.items()},
+        per_user=values,
     )
 
 
@@ -307,5 +311,58 @@ def format_ci(ci: tuple[float, float] | None) -> str:
     return f"[{ci[0]:.4f}, {ci[1]:.4f}]" if ci else "-"
 
 
+@dataclass
+class PairedDifference:
+    model: str
+    baseline: str
+    metric: str
+    mean: float  # mean over users of (model - baseline)
+    ci: tuple[float, float]
+    relative: float  # mean / baseline mean
+
+    @property
+    def significant(self) -> bool:
+        return self.ci[0] > 0 or self.ci[1] < 0
+
+
+def paired_difference(result: EvalResult, baseline: EvalResult, metric: str) -> PairedDifference:
+    """Difference to `baseline` on the same users, with a 95% bootstrap interval.
+
+    Each user is compared with themselves, which removes the user-to-user
+    variance that makes the marginal intervals of two models overlap even when
+    one model is consistently better.
+    """
+    a, b = result.per_user[metric], baseline.per_user[metric]
+    if a.shape != b.shape:
+        raise ValueError("paired comparison needs both models evaluated on the same users")
+    diff = a - b
+    base = b.mean() if len(b) else 0.0
+    return PairedDifference(
+        model=result.model,
+        baseline=baseline.model,
+        metric=metric,
+        mean=float(diff.mean()) if len(diff) else 0.0,
+        ci=bootstrap_ci(diff),
+        relative=float(diff.mean() / base) if base else float("nan"),
+    )
+
+
+def paired_table(diffs: list[PairedDifference]) -> str:
+    if not diffs:
+        return ""
+    lines = [
+        f"| model | Δ{diffs[0].metric} vs {diffs[0].baseline} | 95% CI | relative | significant |",
+        "|---|---|---|---|---|",
+    ]
+    for d in diffs:
+        lines.append(
+            f"| {d.model} | {d.mean:+.4f} | [{d.ci[0]:+.4f}, {d.ci[1]:+.4f}] "
+            f"| {d.relative:+.0%} | {'yes' if d.significant else 'no'} |"
+        )
+    return "\n".join(lines)
+
+
 def to_dict(result: EvalResult) -> dict:
-    return asdict(result)
+    out = asdict(result)
+    del out["per_user"]
+    return out

@@ -4,12 +4,14 @@ import pytest
 
 from recipe_recsys.dataset import InteractionData
 from recipe_recsys.evaluate import (
+    EvalResult,
     bootstrap_ci,
     build_ground_truth,
     build_new_item_slice,
     evaluate,
     evaluate_new_items,
     new_item_pool,
+    paired_difference,
     top_k,
 )
 from recipe_recsys.models import (
@@ -253,3 +255,19 @@ def test_two_tower_scores_new_recipes_from_content():
     model.fit(data, verbose=False)
     [scores] = model.score_items(np.array([data.user_index[99]]), pool)
     assert scores[0] > scores[1]
+
+
+def test_paired_difference_detects_a_consistent_gain_hidden_by_user_variance():
+    rng = np.random.default_rng(0)
+    users = rng.random(500)  # users differ a lot from each other...
+    base = EvalResult("base", {}, 0, 0.0, per_user={"ndcg@10": users})
+    better = EvalResult("better", {}, 0, 0.0, per_user={"ndcg@10": users + 0.01})  # ...+0.01 each
+
+    low_b, high_b = bootstrap_ci(users)
+    low_m, _ = bootstrap_ci(users + 0.01)
+    assert low_m < high_b  # marginal intervals overlap
+
+    diff = paired_difference(better, base, "ndcg@10")
+    assert diff.significant and diff.ci[0] > 0
+    assert diff.mean == pytest.approx(0.01)
+    assert not paired_difference(base, base, "ndcg@10").significant
