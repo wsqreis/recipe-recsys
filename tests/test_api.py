@@ -117,7 +117,8 @@ def test_menu_respects_limits_and_returns_a_shopping_list():
     body = client.post("/api/menu", json=request).json()
     # Only recipes 20 (300 kcal) and 30 (250 kcal) fit the calorie limit.
     assert {d["recipe_id"] for d in body["days"]} == {20, 30}
-    assert {"chicken breasts", "lemon", "beans", "tomato"} == set(body["shopping_list"])
+    # Shopping items are normalized: "chicken breasts" -> "chicken breast", "beans" -> "bean".
+    assert {"chicken breast", "lemon", "bean", "tomato"} == set(body["shopping_list"])
     assert body["mean_calories"] == 275.0
 
     request = {"size": 4, "restrictions": ["vegetarian"], "main_dishes_only": False}

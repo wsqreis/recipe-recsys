@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 from recipe_recsys.dataset import InteractionData
 from recipe_recsys.menu import MenuConfig, ingredient_matrix, plan_menu
 from recipe_recsys.models import Recommender
+from recipe_recsys.quality import plausible_calories, plausible_minutes
 from recipe_recsys.restrictions import RESTRICTIONS
 from recipe_recsys.search import OllamaParser, ParsedQuery, RecipeSearch, as_dict, parse_request
 
@@ -52,7 +53,7 @@ class ServingState:
 class RecipeCard(BaseModel):
     recipe_id: int
     name: str
-    minutes: int
+    minutes: int | None  # None when the dataset value is implausible
     ingredients: list[str]
     calories: float | None = None
     score: float | None = None
@@ -119,13 +120,15 @@ class MenuResponse(BaseModel):
 
 def _card(recipes: pd.DataFrame, recipe_id: int, score: float | None = None) -> RecipeCard:
     row = recipes.loc[recipe_id]
+    minutes = int(row["minutes"])
     calories = row.get("calories")
+    calories = float(calories) if calories is not None and pd.notna(calories) else None
     return RecipeCard(
         recipe_id=int(recipe_id),
         name=str(row["name"]),
-        minutes=int(row["minutes"]),
+        minutes=minutes if plausible_minutes(minutes) else None,
         ingredients=list(row["ingredients"]),
-        calories=float(calories) if calories is not None and pd.notna(calories) else None,
+        calories=calories if calories is not None and plausible_calories(calories) else None,
         score=score,
     )
 

@@ -151,6 +151,17 @@ def cmd_eval_menu(args: argparse.Namespace) -> None:
         print(f"\nsaved reports/{args.save}.md")
 
 
+def cmd_data_report(args: argparse.Namespace) -> None:
+    from recipe_recsys.quality import quality_report
+
+    text = quality_report(data.load_recipes(columns=["ingredients", "minutes", "calories"]))
+    print(text)
+    if args.save:
+        REPORTS_DIR.mkdir(exist_ok=True)
+        (REPORTS_DIR / f"{args.save}.md").write_text(text + "\n", encoding="utf-8")
+        print(f"\nsaved reports/{args.save}.md")
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     import uvicorn
 
@@ -456,6 +467,10 @@ def main() -> None:
         "--no-llm", action="store_true", help="skip the LLM: keyword restrictions + raw text"
     )
     se.set_defaults(func=cmd_search)
+
+    dq = sub.add_parser("data-report", help="data quality: ingredient names, implausible values")
+    dq.add_argument("--save", metavar="NAME", help="write reports/NAME.md")
+    dq.set_defaults(func=cmd_data_report)
 
     em = sub.add_parser("eval-menu", help="what weekly-menu planning costs in accuracy")
     em.add_argument("--stage", choices=["val", "test"], default="val")

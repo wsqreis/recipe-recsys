@@ -25,6 +25,7 @@ import scipy.sparse as sp
 from recipe_recsys.dataset import InteractionData
 from recipe_recsys.evaluate import EvalResult, evaluate_rankings, mask_scores, paired_difference
 from recipe_recsys.models import Recommender
+from recipe_recsys.quality import normalize_ingredient
 
 # Not worth a line on a shopping list.
 PANTRY = frozenset(
@@ -55,12 +56,19 @@ class Menu:
     mean_similarity: float  # mean pairwise text similarity of the picks (lower = more varied)
 
 
+_PANTRY_NORMALIZED = frozenset(normalize_ingredient(p) for p in PANTRY)
+
+
 def ingredient_matrix(ingredients: Sequence[Sequence[str]]) -> tuple[sp.csr_matrix, list[str]]:
-    """Binary recipes x ingredients matrix without pantry staples, and the column names."""
+    """Binary recipes x shopping items matrix, and the item names.
+
+    Ingredient strings are normalized ("minced garlic cloves" -> "garlic", see
+    recipe_recsys.quality) and pantry staples are left out.
+    """
     vocab: dict[str, int] = {}
     rows, cols = [], []
     for row, recipe in enumerate(ingredients):
-        for name in {i.strip().lower() for i in recipe} - PANTRY:
+        for name in {normalize_ingredient(i) for i in recipe} - _PANTRY_NORMALIZED:
             rows.append(row)
             cols.append(vocab.setdefault(name, len(vocab)))
     matrix = sp.csr_matrix(
