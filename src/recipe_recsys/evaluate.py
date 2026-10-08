@@ -51,6 +51,8 @@ class EvalResult:
     restriction_violations: int
     seconds: float
     extra: dict[str, float] = field(default_factory=dict)
+    # 95% bootstrap interval per metric (over users), see bootstrap_ci.
+    ci: dict[str, tuple[float, float]] = field(default_factory=dict)
 
 
 def top_k(scores: np.ndarray, k: int) -> list[np.ndarray]:
@@ -147,7 +149,7 @@ def _evaluate_rankings(
     start = time.perf_counter()
     users = np.array(sorted(truth), dtype=np.int64)
 
-    sums: dict[str, float] = {}
+    per_user: dict[str, list[float]] = {}
     all_recs: list[np.ndarray] = []
     violations = 0
     for batch_start in range(0, len(users), batch_size):
@@ -162,14 +164,15 @@ def _evaluate_rankings(
                     ("ndcg", metrics.ndcg_at_k),
                     ("hit_rate", metrics.hit_rate_at_k),
                 ):
-                    key = f"{metric_name}@{k}"
-                    sums[key] = sums.get(key, 0.0) + fn(ranked_list, relevant, k)
+                    per_user.setdefault(f"{metric_name}@{k}", []).append(
+                        fn(ranked_list, relevant, k)
+                    )
             if allowed is not None:
                 violations += int((~allowed[ranked]).sum())
         all_recs.extend(recs)
 
     n = max(len(users), 1)
-    results = {key: value / n for key, value in sums.items()}
+    results = {key: sum(values) / n for key, values in per_user.items()}
     for k in ks:
         results[f"coverage@{k}"] = metrics.catalog_coverage([r[:k] for r in all_recs], n_items)
     return EvalResult(
@@ -177,47 +180,68 @@ def _evaluate_rankings(
         metrics=results,
         restriction_violations=violations,
         seconds=time.perf_counter() - start,
+        ci={key: bootstrap_ci(np.asarray(values)) for key, values in per_user.items()},
     )
 
 
-# ---- cold items --------------------------------------------------------------------------
+def bootstrap_ci(
+    values: np.ndarray, n_boot: int = 1000, level: float = 0.95, seed: int = 0
+) -> tuple[float, float]:
+    """Percentile bootstrap interval of the mean over users.
+
+    The fixed seed draws the same user resamples for every model evaluated on
+    the same users, so overlapping intervals are a fair "too close to call".
+    """
+    if len(values) == 0:
+        return (0.0, 0.0)
+    rng = np.random.default_rng(seed)
+    means = values[rng.integers(0, len(values), (n_boot, len(values)))].mean(axis=1)
+    low, high = np.quantile(means, [(1 - level) / 2, (1 + level) / 2])
+    return float(low), float(high)
+
+
+# ---- new items ---------------------------------------------------------------------------
 #
 # The "cold recipes" share printed by build_ground_truth is not dropped forever:
-# this slice asks known users to rank only recipes outside the training catalog.
-# They are either new (submitted after training ended) or long-tail recipes that
-# the k-core removed for having fewer than 5 interactions; for a collaborative
-# model both are equally unknown.
+# this slice asks known users to rank only recipes submitted during the evaluated
+# window, which no model has seen in training. Long-tail recipes removed by the
+# k-core are left out on purpose: with them the pool grows from ~9k to ~194k
+# recipes and every model, random included, lands within noise of the others.
 
 
 @dataclass
-class ColdItemSlice:
+class NewItemSlice:
     pool: ItemPool
     truth: dict[int, set[int]]  # train user row -> pool indices
-    seen: sp.csr_matrix  # train users x pool: cooked before the k-core removed the recipe
+    seen: sp.csr_matrix  # train users x pool: already cooked in the raw training window
 
 
-def cold_item_pool(
-    train: InteractionData, recipes: pd.DataFrame, available_before: pd.Timestamp | None = None
+def new_item_pool(
+    train: InteractionData,
+    recipes: pd.DataFrame,
+    submitted_from: pd.Timestamp,
+    submitted_before: pd.Timestamp | None = None,
 ) -> ItemPool:
-    """Recipes outside the training catalog that existed before the end of the evaluated window.
+    """Recipes submitted during the evaluated window (and absent from the training catalog).
 
-    Restricting candidates to recipes that appear in the evaluation window would
-    leak the future (it tells the model which recipes will be cooked).
+    Restricting candidates to recipes that are cooked in the window would leak the
+    future (it tells the model which recipes will be cooked), so every recipe
+    submitted in the window is a candidate.
     """
-    keep = ~recipes["recipe_id"].isin(train.item_ids)
-    if available_before is not None:
-        keep &= recipes["submitted"] < available_before
+    keep = ~recipes["recipe_id"].isin(train.item_ids) & (recipes["submitted"] >= submitted_from)
+    if submitted_before is not None:
+        keep &= recipes["submitted"] < submitted_before
     content = recipes[keep].reset_index(drop=True)
     return ItemPool(content["recipe_id"].to_numpy(), content)
 
 
-def build_cold_item_slice(
+def build_new_item_slice(
     train: InteractionData,
     train_df: pd.DataFrame,
     eval_df: pd.DataFrame,
     pool: ItemPool,
     allowed: np.ndarray | None = None,
-) -> ColdItemSlice:
+) -> NewItemSlice:
     """`train_df` is the raw training window (before the k-core): what users already cooked."""
     pool_index = pd.Series(np.arange(len(pool)), index=pool.item_ids)
 
@@ -243,12 +267,12 @@ def build_cold_item_slice(
     if allowed is not None:
         eval_pairs = eval_pairs[allowed[eval_pairs["i"].to_numpy()]]
     truth = {int(u): set(g.tolist()) for u, g in eval_pairs.groupby("u")["i"]}
-    return ColdItemSlice(pool, truth, seen)
+    return NewItemSlice(pool, truth, seen)
 
 
-def evaluate_cold_items(
+def evaluate_new_items(
     model: Recommender,
-    cold: ColdItemSlice,
+    new: NewItemSlice,
     ks: tuple[int, ...] = (10, 20),
     allowed: np.ndarray | None = None,
     batch_size: int = 256,
@@ -256,28 +280,31 @@ def evaluate_cold_items(
     """Rank only the pool; raises NotImplementedError for models that cannot score it."""
 
     def rank(batch: np.ndarray) -> list[np.ndarray]:
-        scores = np.asarray(model.score_items(batch, cold.pool), dtype=np.float32)
-        scores[cold.seen[batch].nonzero()] = -np.inf
+        scores = np.asarray(model.score_items(batch, new.pool), dtype=np.float32)
+        scores[new.seen[batch].nonzero()] = -np.inf
         if allowed is not None:
             scores[:, ~allowed] = -np.inf
         return top_k(scores, max(ks))
 
-    return _evaluate_rankings(
-        repr(model), rank, cold.truth, len(cold.pool), ks, allowed, batch_size
-    )
+    return _evaluate_rankings(repr(model), rank, new.truth, len(new.pool), ks, allowed, batch_size)
 
 
 def results_table(results: list[EvalResult], ks: tuple[int, ...]) -> str:
     cols = [f"{m}@{k}" for k in ks for m in ("recall", "ndcg", "hit_rate", "coverage")]
-    header = "| model | " + " | ".join(cols) + " | time (s) |"
-    sep = "|" + "---|" * (len(cols) + 2)
+    main = f"ndcg@{ks[0]}"
+    header = "| model | " + " | ".join(cols) + f" | {main} 95% CI | time (s) |"
+    sep = "|" + "---|" * (len(cols) + 3)
     rows = [
         f"| {r.model} | "
         + " | ".join(f"{r.metrics[c]:.4f}" for c in cols)
-        + f" | {r.seconds:.1f} |"
+        + f" | {format_ci(r.ci.get(main))} | {r.seconds:.1f} |"
         for r in results
     ]
     return "\n".join([header, sep, *rows])
+
+
+def format_ci(ci: tuple[float, float] | None) -> str:
+    return f"[{ci[0]:.4f}, {ci[1]:.4f}]" if ci else "-"
 
 
 def to_dict(result: EvalResult) -> dict:

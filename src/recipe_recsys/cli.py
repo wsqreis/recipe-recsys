@@ -14,11 +14,12 @@ from recipe_recsys import data
 from recipe_recsys.dataset import InteractionData
 from recipe_recsys.evaluate import (
     EvalResult,
-    build_cold_item_slice,
     build_ground_truth,
-    cold_item_pool,
+    build_new_item_slice,
     evaluate,
-    evaluate_cold_items,
+    evaluate_new_items,
+    format_ci,
+    new_item_pool,
     recommend,
     results_table,
     to_dict,
@@ -115,49 +116,45 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         f"| evaluable {shares['evaluable_share']:.1%} ({stats.evaluable_users:,} users)\n"
     )
 
-    cold, cold_allowed, cold_info = None, None, {}
-    if "cold_item" in args.slice:
-        # On val, recipes submitted during the test window do not exist yet.
-        pool = cold_item_pool(train, recipes, split.test_start if args.stage == "val" else None)
+    new, new_allowed, new_info = None, None, {}
+    if "new_item" in args.slice:
+        window_start = split.val_start if args.stage == "val" else split.test_start
+        window_end = split.test_start if args.stage == "val" else None
+        pool = new_item_pool(train, recipes, window_start, window_end)
         if text is not None:
             pool.text = text(pool.item_ids)
-        cold_allowed = _allowed_for(pool.item_ids, recipes, args.restrict)
-        cold = build_cold_item_slice(train, train_df, eval_df, pool, cold_allowed)
-        submitted = pool.content["submitted"].to_numpy()
-        cooked = np.array([i for items in cold.truth.values() for i in items], dtype=np.int64)
-        cold_info = {
+        new_allowed = _allowed_for(pool.item_ids, recipes, args.restrict)
+        new = build_new_item_slice(train, train_df, eval_df, pool, new_allowed)
+        new_info = {
             "candidates": len(pool),
-            "interactions": len(cooked),
-            "users": len(cold.truth),
-            "new_recipe_share": float((submitted[cooked] >= train_df["date"].max()).mean()),
+            "interactions": sum(len(items) for items in new.truth.values()),
+            "users": len(new.truth),
         }
         print(
-            f"cold_item slice: {cold_info['candidates']:,} candidate recipes outside the "
-            f"training catalog | {cold_info['interactions']:,} interactions from "
-            f"{cold_info['users']:,} users | {cold_info['new_recipe_share']:.0%} of them on "
-            "recipes submitted after training ended\n"
+            f"new_item slice: {new_info['candidates']:,} recipes submitted during the window "
+            f"| {new_info['interactions']:,} interactions from {new_info['users']:,} known users\n"
         )
 
     ks = tuple(args.k)
-    results, cold_results = [], []
+    results, new_results = [], []
     for model in models:
         model.fit(train)
         if "warm" in args.slice:
             results.append(evaluate(model, train, truth, ks=ks, allowed=allowed))
             _print_result(results[-1], ks, allowed)
-        if cold is not None:
+        if new is not None:
             try:
-                cold_results.append(evaluate_cold_items(model, cold, ks=ks, allowed=cold_allowed))
+                new_results.append(evaluate_new_items(model, new, ks=ks, allowed=new_allowed))
             except NotImplementedError as e:
-                print(f"  {model} [cold_item]: n/a ({e})")
+                print(f"  {model} [new_item]: n/a ({e})")
                 continue
-            _print_result(cold_results[-1], ks, cold_allowed, "cold_item")
+            _print_result(new_results[-1], ks, new_allowed, "new_item")
 
     sections = []
     if results:
         sections.append(results_table(results, ks))
-    if cold_results:
-        sections.append("## cold_item\n\n" + results_table(cold_results, ks))
+    if new_results:
+        sections.append("## new_item\n\n" + results_table(new_results, ks))
     print("\n" + "\n\n".join(sections))
 
     if not args.save:
@@ -170,8 +167,8 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         "cold_start": {**vars(stats), **shares},
         "results": [to_dict(r) for r in results],
     }
-    if cold is not None:
-        report["cold_item"] = {**cold_info, "results": [to_dict(r) for r in cold_results]}
+    if new is not None:
+        report["new_item"] = {**new_info, "results": [to_dict(r) for r in new_results]}
     (REPORTS_DIR / f"{args.save}.json").write_text(json.dumps(report, indent=2, default=str))
     (REPORTS_DIR / f"{args.save}.md").write_text("\n\n".join(sections) + "\n")
     print(f"\nsaved reports/{args.save}.md")
@@ -182,9 +179,10 @@ def _print_result(
 ) -> None:
     violations = f" | violations={result.restriction_violations}" if allowed is not None else ""
     tag = f" [{label}]" if label else ""
+    main = f"ndcg@{ks[0]}"
     print(
-        f"  {result.model}{tag}: ndcg@{ks[0]}={result.metrics[f'ndcg@{ks[0]}']:.4f} "
-        f"({result.seconds:.1f}s){violations}"
+        f"  {result.model}{tag}: {main}={result.metrics[main]:.4f} "
+        f"{format_ci(result.ci.get(main))} ({result.seconds:.1f}s){violations}"
     )
 
 
@@ -258,10 +256,10 @@ def main() -> None:
     ev.add_argument(
         "--slice",
         nargs="+",
-        choices=["warm", "cold_item"],
+        choices=["warm", "new_item"],
         default=["warm"],
-        help="warm: known users x training catalog. cold_item: known users x recipes "
-        "outside the training catalog (only content-aware models can score them)",
+        help="warm: known users x training catalog. new_item: known users x recipes "
+        "submitted during the evaluated window (only content-aware models can score them)",
     )
     ev.add_argument("--k", nargs="+", type=int, default=[10, 20])
     ev.add_argument("--restrict", **restrict_kwargs)
