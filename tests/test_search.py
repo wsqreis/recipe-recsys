@@ -43,6 +43,15 @@ def test_to_query_drops_unknown_values_and_bad_minutes():
     assert parsed == ParsedQuery(["lactose"], ["chicken"], [], None, "quick chicken")
 
 
+def test_excluding_a_whole_category_becomes_a_restriction():
+    raw = {"restrictions": [], "include": [], "max_minutes": None, "query": "x"}
+    # "no meat" as an exclude would still let chicken through a word filter.
+    assert _to_query({**raw, "exclude": ["meat"]}).restrictions == ["vegetarian"]
+    assert _to_query({**raw, "exclude": ["Eggs", "milk"]}).restrictions == ["egg", "lactose"]
+    # A single ingredient stays a plain exclude.
+    assert _to_query({**raw, "exclude": ["butter", "pork"]}).restrictions == []
+
+
 class _FakeParser:
     def parse(self, text):
         return ParsedQuery(query="chicken")

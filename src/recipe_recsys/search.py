@@ -66,12 +66,15 @@ Fields:
   vegetarian (no meat or fish), vegan (no animal products), lactose (no dairy),
   egg (no eggs), gluten (no gluten), nuts (no tree nuts or peanuts).
   Only add a restriction if the request states it ("without dairy", "I'm vegan",
-  "peanut allergy"). Never infer one from the ingredients: a request with chicken
-  is not vegetarian.
+  "peanut allergy", "I don't eat meat"). Never infer one from the ingredients: a
+  request with chicken is not vegetarian. Leaving out one specific ingredient is
+  not a restriction: "no pork" is an exclude, not vegetarian; "no butter" is an
+  exclude, not lactose; "omelet without onion" has no restriction.
 - include: ingredients the user explicitly names as required, as common English
-  nouns ("chicken", "peanut butter"). Never add ingredients the user did not name:
-  "vegetable soup" has no required ingredient. Empty if none.
-- exclude: ingredients the user does not want that are not covered by a
+  nouns ("chicken", "peanut butter"). Dish names are not ingredients: "lasagna",
+  "curry", "pancakes", "brownies" go in the query, not in include. Never add
+  ingredients the user did not name: "vegetable soup" has no required ingredient.
+- exclude: specific ingredients the user does not want that are not covered by a
   restriction ("no mushrooms" -> "mushroom"). Empty if none.
 - max_minutes: maximum total time in minutes if the user gives one ("quick" alone
   is not a number: use null). "half an hour" = 30, "1 hour" = 60.
@@ -122,12 +125,38 @@ class OllamaParser:
         return _to_query(json.loads(content))
 
 
+# Excluded terms that name a whole restricted category. Excluding "meat" with a
+# word filter still lets chicken and fish through, so it becomes the restriction.
+_CATEGORY_EXCLUDES: dict[str, str] = {
+    "meat": "vegetarian",
+    "animal product": "vegan",
+    "dairy": "lactose",
+    "dairy product": "lactose",
+    "milk": "lactose",
+    "lactose": "lactose",
+    "egg": "egg",
+    "gluten": "gluten",
+    "nut": "nuts",
+    "tree nut": "nuts",
+    "peanut": "nuts",
+}
+
+
+def _singular(term: str) -> str:
+    return term[:-1] if term.endswith("s") and not term.endswith("ss") else term
+
+
 def _to_query(raw: dict) -> ParsedQuery:
     minutes = raw.get("max_minutes")
+    exclude = [s.strip().lower() for s in raw.get("exclude", []) if s.strip()]
+    restrictions = {r for r in raw.get("restrictions", []) if r in RESTRICTIONS}
+    restrictions |= {
+        _CATEGORY_EXCLUDES[_singular(t)] for t in exclude if _singular(t) in _CATEGORY_EXCLUDES
+    }
     return ParsedQuery(
-        restrictions=sorted({r for r in raw.get("restrictions", []) if r in RESTRICTIONS}),
+        restrictions=sorted(restrictions),
         include=[s.strip().lower() for s in raw.get("include", []) if s.strip()],
-        exclude=[s.strip().lower() for s in raw.get("exclude", []) if s.strip()],
+        exclude=exclude,
         max_minutes=int(minutes) if isinstance(minutes, int | float) and minutes > 0 else None,
         query=str(raw.get("query", "")).strip(),
     )
