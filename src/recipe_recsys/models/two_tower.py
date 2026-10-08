@@ -24,6 +24,7 @@ from collections import Counter
 
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -332,6 +333,19 @@ class TwoTowerRecommender(Recommender):
 
     def score(self, user_rows: np.ndarray) -> np.ndarray:
         return self._user_vectors[user_rows] @ self._item_vectors.T
+
+    @torch.no_grad()
+    def score_histories(self, histories: sp.csr_matrix) -> np.ndarray:
+        """The user tower only needs recipes, so new users are encoded as in serving."""
+        histories = histories.tocsr()
+        n_items = self._item_vectors.shape[0]
+        padded = np.full((histories.shape[0], self.max_history), n_items, dtype=np.int64)
+        for row in range(histories.shape[0]):
+            items = histories.indices[histories.indptr[row] : histories.indptr[row + 1]]
+            items = items[-self.max_history :]
+            padded[row, : len(items)] = items
+        user_vectors = self._user_tower(torch.from_numpy(padded).to(self._dev)).cpu().numpy()
+        return user_vectors @ self._item_vectors.T
 
     def score_items(self, user_rows: np.ndarray, pool: ItemPool) -> np.ndarray:
         """Recipes without a trained id are encoded from content (and text) only."""

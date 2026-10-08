@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+import scipy.sparse as sp
 
 from recipe_recsys.dataset import InteractionData
 from recipe_recsys.evaluate import (
@@ -8,8 +9,10 @@ from recipe_recsys.evaluate import (
     bootstrap_ci,
     build_ground_truth,
     build_new_item_slice,
+    build_new_user_slice,
     evaluate,
     evaluate_new_items,
+    evaluate_new_users,
     new_item_pool,
     paired_difference,
     top_k,
@@ -271,3 +274,58 @@ def test_paired_difference_detects_a_consistent_gain_hidden_by_user_variance():
     assert diff.significant and diff.ci[0] > 0
     assert diff.mean == pytest.approx(0.01)
     assert not paired_difference(base, base, "ndcg@10").significant
+
+
+def test_new_user_slice_uses_first_recipes_as_history():
+    A, B, C, X = 10, 20, 30, 99
+    train = InteractionData.from_frame(
+        pd.DataFrame({"user_id": [1, 1, 2], "recipe_id": [A, B, C], "date": pd.Timestamp(0)})
+    )
+    eval_df = pd.DataFrame(
+        {
+            # user 9: new, cooks B, then A, then X (not in the catalog), then B again
+            # user 8: new, only one catalog recipe, so nothing is left to predict
+            # user 1: known, belongs to the warm slice
+            "user_id": [9, 9, 9, 9, 8, 1],
+            "recipe_id": [B, A, X, B, C, C],
+            "date": pd.to_datetime(
+                ["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-04", "2020-01-01", "2020-01-01"]
+            ),
+        }
+    )
+    new = build_new_user_slice(train, eval_df, seed=1)
+    assert new.truth == {0: {train.item_index[A]}}
+    assert new.histories.toarray()[0].nonzero()[0].tolist() == [train.item_index[B]]
+
+
+def test_scoring_a_training_history_matches_scoring_the_user():
+    A, B, C, D = 10, 20, 30, 40
+    rows = [(u, A) for u in range(5)] + [(u, B) for u in range(5)]
+    rows += [(u, C) for u in range(5, 9)] + [(u, D) for u in range(5, 9)] + [(9, A)]
+    df = pd.DataFrame(rows, columns=["user_id", "recipe_id"]).assign(date=pd.Timestamp(0))
+    data = InteractionData.from_frame(df)
+    user = np.array([data.user_index[9]])
+    item = data.item_index
+
+    knn = ItemKNNRecommender(neighbors=10, shrink=0).fit(data)
+    np.testing.assert_allclose(knn.score_histories(data.matrix[user]), knn.score(user))
+
+    # iALS fold-in: a new user who cooked A gets B ranked above C and D.
+    ials = IALSRecommender(factors=4, reg=0.01, alpha=10.0, iterations=20).fit(data)
+    history = sp.csr_matrix(([1.0], ([0], [item[A]])), shape=(1, data.n_items))
+    scores = ials.score_histories(history)[0]
+    assert scores[item[B]] > max(scores[item[C]], scores[item[D]])
+
+
+def test_evaluate_new_users_never_recommends_the_seed_recipe():
+    A, B = 10, 20
+    train = InteractionData.from_frame(
+        pd.DataFrame({"user_id": [1, 1, 2, 2], "recipe_id": [A, B, A, B], "date": pd.Timestamp(0)})
+    )
+    eval_df = pd.DataFrame(
+        {"user_id": [9, 9], "recipe_id": [A, B], "date": pd.to_datetime(["2020", "2021"])}
+    )
+    new = build_new_user_slice(train, eval_df, seed=1)
+    # Popularity ties A and B; A is the seed, so B must be the only recommendation.
+    result = evaluate_new_users(PopularityRecommender().fit(train), new, ks=(1,))
+    assert result.metrics["hit_rate@1"] == 1.0

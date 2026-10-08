@@ -9,6 +9,7 @@ This is the simple baseline that learned content models have to beat.
 from __future__ import annotations
 
 import numpy as np
+import scipy.sparse as sp
 
 from recipe_recsys.dataset import InteractionData, ItemPool
 from recipe_recsys.models.base import Recommender
@@ -37,6 +38,11 @@ class TextProfileRecommender(Recommender):
 
     def score(self, user_rows: np.ndarray) -> np.ndarray:
         return self._profiles[user_rows] @ self._item_text.T
+
+    def score_histories(self, histories: sp.csr_matrix) -> np.ndarray:
+        profiles = histories @ self._item_text
+        profiles /= np.linalg.norm(profiles, axis=1, keepdims=True).clip(min=1e-12)
+        return profiles @ self._item_text.T
 
     def score_items(self, user_rows: np.ndarray, pool: ItemPool) -> np.ndarray:
         if pool.text is None:

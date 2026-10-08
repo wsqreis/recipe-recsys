@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 
 from recipe_recsys.dataset import InteractionData, ItemPool
 from recipe_recsys.models.base import Recommender
@@ -28,6 +29,10 @@ class RandomRecommender(Recommender):
         # (e.g. whether the warm slice ran first).
         rng = np.random.default_rng([self.seed, *user_rows[:1].tolist(), len(user_rows)])
         return rng.random((len(user_rows), len(pool)), dtype=np.float32)
+
+    def score_histories(self, histories: sp.csr_matrix) -> np.ndarray:
+        rng = np.random.default_rng([self.seed, histories.shape[0], histories.nnz])
+        return rng.random(histories.shape, dtype=np.float32)
 
 
 def _days(submitted: pd.Series) -> np.ndarray:
@@ -56,6 +61,9 @@ class NewestRecommender(Recommender):
         scores = _days(pool.content["submitted"]).astype(np.float32)
         return np.broadcast_to(scores, (len(user_rows), len(scores))).copy()
 
+    def score_histories(self, histories: sp.csr_matrix) -> np.ndarray:
+        return _broadcast(self._scores, histories.shape[0])
+
 
 class PopularityRecommender(Recommender):
     """Most-cooked recipes overall."""
@@ -68,6 +76,9 @@ class PopularityRecommender(Recommender):
 
     def score(self, user_rows: np.ndarray) -> np.ndarray:
         return np.broadcast_to(self._scores, (len(user_rows), len(self._scores))).copy()
+
+    def score_histories(self, histories: sp.csr_matrix) -> np.ndarray:
+        return _broadcast(self._scores, histories.shape[0])
 
 
 class RecentPopularityRecommender(Recommender):
@@ -93,3 +104,11 @@ class RecentPopularityRecommender(Recommender):
 
     def score(self, user_rows: np.ndarray) -> np.ndarray:
         return np.broadcast_to(self._scores, (len(user_rows), len(self._scores))).copy()
+
+    def score_histories(self, histories: sp.csr_matrix) -> np.ndarray:
+        return _broadcast(self._scores, histories.shape[0])
+
+
+def _broadcast(scores: np.ndarray, n_users: int) -> np.ndarray:
+    """Non-personalized models ignore the history: same scores for every new user."""
+    return np.broadcast_to(scores, (n_users, len(scores))).copy()

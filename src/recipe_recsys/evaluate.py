@@ -293,6 +293,76 @@ def evaluate_new_items(
     return _evaluate_rankings(repr(model), rank, new.truth, len(new.pool), ks, allowed, batch_size)
 
 
+# ---- new users ---------------------------------------------------------------------------
+#
+# Most evaluation interactions come from users who do not exist in training. A
+# user with no history at all can only get non-personalized recommendations, so
+# this slice reproduces the first moment personalization is possible: the user
+# has cooked their first `seed` recipes, and the models must rank what they
+# cook next. The seed comes from the user's own past in the evaluated window,
+# which is what a live system would know at that point.
+
+
+@dataclass
+class NewUserSlice:
+    histories: sp.csr_matrix  # new users x training catalog: the seed recipes
+    truth: dict[int, set[int]]  # new user row -> recipes cooked after the seed
+
+
+def build_new_user_slice(
+    train: InteractionData,
+    eval_df: pd.DataFrame,
+    seed: int = 1,
+    allowed: np.ndarray | None = None,
+) -> NewUserSlice:
+    """New users with more than `seed` distinct catalog recipes in the window."""
+    df = eval_df[~eval_df["user_id"].isin(train.user_ids)]
+    df = df.assign(item=df["recipe_id"].map(train.item_index))
+    df = df[df["item"].notna()].astype({"item": int})
+    # Repeated reviews of the same recipe count once, at their first date.
+    df = df.sort_values(["user_id", "date"], kind="stable").drop_duplicates(["user_id", "item"])
+
+    seeds, truth = [], {}
+    for _, items in df.groupby("user_id", sort=True)["item"]:
+        items = items.tolist()
+        if len(items) <= seed:
+            continue
+        rest = set(items[seed:])
+        if allowed is not None:
+            rest = {i for i in rest if allowed[i]}
+        if rest:
+            truth[len(seeds)] = rest
+            seeds.append(items[:seed])
+
+    rows = np.repeat(np.arange(len(seeds)), seed)
+    cols = np.array([i for items in seeds for i in items], dtype=np.int64)
+    histories = sp.csr_matrix(
+        (np.ones(len(cols), dtype=np.float32), (rows, cols)), shape=(len(seeds), train.n_items)
+    )
+    return NewUserSlice(histories, truth)
+
+
+def evaluate_new_users(
+    model: Recommender,
+    new: NewUserSlice,
+    ks: tuple[int, ...] = (10, 20),
+    allowed: np.ndarray | None = None,
+    batch_size: int = 512,
+) -> EvalResult:
+    """Raises NotImplementedError for models that cannot score users outside training."""
+
+    def rank(batch: np.ndarray) -> list[np.ndarray]:
+        histories = new.histories[batch]
+        scores = np.asarray(model.score_histories(histories), dtype=np.float32)
+        scores[histories.nonzero()] = -np.inf  # the seed recipes are already cooked
+        if allowed is not None:
+            scores[:, ~allowed] = -np.inf
+        return top_k(scores, max(ks))
+
+    n_items = new.histories.shape[1]
+    return _evaluate_rankings(repr(model), rank, new.truth, n_items, ks, allowed, batch_size)
+
+
 def results_table(results: list[EvalResult], ks: tuple[int, ...]) -> str:
     cols = [f"{m}@{k}" for k in ks for m in ("recall", "ndcg", "hit_rate", "coverage")]
     main = f"ndcg@{ks[0]}"

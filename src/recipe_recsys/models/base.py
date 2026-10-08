@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 import numpy as np
+import scipy.sparse as sp
 
 from recipe_recsys.dataset import InteractionData, ItemPool
 
@@ -31,6 +32,14 @@ class Recommender(ABC):
         Only content-aware models can; the default says so instead of guessing.
         """
         raise NotImplementedError(f"{self.name} cannot score recipes it was not trained on")
+
+    def score_histories(self, histories: sp.csr_matrix) -> np.ndarray:
+        """Score the catalog for users that were not in training, from their histories.
+
+        `histories` is a binary (n_users, n_items) matrix of the recipes each new
+        user cooked. Returns a dense (n_users, n_items) array.
+        """
+        raise NotImplementedError(f"{self.name} cannot score users it was not trained on")
 
     def __repr__(self) -> str:
         params = ", ".join(f"{k}={v}" for k, v in vars(self).items() if not k.startswith("_"))

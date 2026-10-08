@@ -48,7 +48,11 @@ class ItemKNNRecommender(Recommender):
         return self
 
     def score(self, user_rows: np.ndarray) -> np.ndarray:
-        return (self._user_items[user_rows] @ self._sim).toarray().astype(np.float32, copy=False)
+        return self.score_histories(self._user_items[user_rows])
+
+    def score_histories(self, histories: sp.csr_matrix) -> np.ndarray:
+        # Item-based scores only need the items, not a trained user: new users work as is.
+        return (histories @ self._sim).toarray().astype(np.float32, copy=False)
 
 
 def _top_k_per_row(m: sp.csr_matrix, k: int) -> sp.csr_matrix:

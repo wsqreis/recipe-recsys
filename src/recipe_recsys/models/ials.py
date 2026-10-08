@@ -83,3 +83,11 @@ class IALSRecommender(Recommender):
 
     def score(self, user_rows: np.ndarray) -> np.ndarray:
         return self._user_factors[user_rows] @ self._item_factors.T
+
+    def score_histories(self, histories: sp.csr_matrix) -> np.ndarray:
+        """Fold-in: the same closed-form user update as in training, with items fixed.
+
+        A new user gets an embedding from their recipes without retraining.
+        """
+        user_factors = self._solve(histories.tocsr(), self._item_factors)
+        return user_factors @ self._item_factors.T

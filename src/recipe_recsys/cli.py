@@ -18,8 +18,10 @@ from recipe_recsys.evaluate import (
     PairedDifference,
     build_ground_truth,
     build_new_item_slice,
+    build_new_user_slice,
     evaluate,
     evaluate_new_items,
+    evaluate_new_users,
     format_ci,
     new_item_pool,
     paired_difference,
@@ -198,54 +200,78 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         f"| evaluable {shares['evaluable_share']:.1%} ({stats.evaluable_users:,} users)\n"
     )
 
-    new, new_allowed, new_info = None, None, {}
+    ks = tuple(args.k)
+    # Extra slices: name -> (evaluate one fitted model, restriction mask, description).
+    slices: dict[str, tuple[Callable[[Recommender], EvalResult], np.ndarray | None, dict]] = {}
     if "new_item" in args.slice:
         window_start = split.val_start if args.stage == "val" else split.test_start
         window_end = split.test_start if args.stage == "val" else None
         pool = new_item_pool(train, recipes, window_start, window_end)
         if text is not None:
             pool.text = text(pool.item_ids)
-        new_allowed = _allowed_for(pool.item_ids, recipes, args.restrict)
-        new = build_new_item_slice(train, train_df, eval_df, pool, new_allowed)
-        new_info = {
+        pool_allowed = _allowed_for(pool.item_ids, recipes, args.restrict)
+        new_items = build_new_item_slice(train, train_df, eval_df, pool, pool_allowed)
+        info = {
             "candidates": len(pool),
-            "interactions": sum(len(items) for items in new.truth.values()),
-            "users": len(new.truth),
+            "interactions": sum(len(items) for items in new_items.truth.values()),
+            "users": len(new_items.truth),
         }
         print(
-            f"new_item slice: {new_info['candidates']:,} recipes submitted during the window "
-            f"| {new_info['interactions']:,} interactions from {new_info['users']:,} known users\n"
+            f"new_item slice: {info['candidates']:,} recipes submitted during the window "
+            f"| {info['interactions']:,} interactions from {info['users']:,} known users"
         )
+        slices["new_item"] = (
+            lambda m: evaluate_new_items(m, new_items, ks=ks, allowed=pool_allowed),
+            pool_allowed,
+            info,
+        )
+    if "new_user" in args.slice:
+        new_users = build_new_user_slice(train, eval_df, args.seed_recipes, allowed)
+        info = {
+            "seed_recipes": args.seed_recipes,
+            "users": len(new_users.truth),
+            "interactions": sum(len(items) for items in new_users.truth.values()),
+        }
+        print(
+            f"new_user slice: {info['users']:,} users not in training, ranked after their "
+            f"first {args.seed_recipes} recipe(s) | {info['interactions']:,} interactions"
+        )
+        slices["new_user"] = (
+            lambda m: evaluate_new_users(m, new_users, ks=ks, allowed=allowed),
+            allowed,
+            info,
+        )
+    print()
 
-    ks = tuple(args.k)
-    results, new_results = [], []
+    results: list[EvalResult] = []
+    slice_results: dict[str, list[EvalResult]] = {name: [] for name in slices}
     for model in models:
         model.fit(train)
         if "warm" in args.slice:
             results.append(evaluate(model, train, truth, ks=ks, allowed=allowed))
             _print_result(results[-1], ks, allowed)
-        if new is not None:
+        for name, (run, slice_allowed, _) in slices.items():
             try:
-                new_results.append(evaluate_new_items(model, new, ks=ks, allowed=new_allowed))
+                slice_results[name].append(run(model))
             except NotImplementedError as e:
-                print(f"  {model} [new_item]: n/a ({e})")
+                print(f"  {model} [{name}]: n/a ({e})")
                 continue
-            _print_result(new_results[-1], ks, new_allowed, "new_item")
+            _print_result(slice_results[name][-1], ks, slice_allowed, name)
 
     baselines = [repr(build_model(spec)) for spec in args.baseline]
-    paired = {
-        "warm": _paired(results, baselines, f"ndcg@{ks[0]}"),
-        "new_item": _paired(new_results, baselines, f"ndcg@{ks[0]}"),
-    }
+    metric = f"ndcg@{ks[0]}"
     sections = []
+    paired_warm = _paired(results, baselines, metric)
     if results:
         sections.append(results_table(results, ks))
-        if paired["warm"]:
-            sections.append(paired_table(paired["warm"]))
-    if new_results:
-        sections.append("## new_item\n\n" + results_table(new_results, ks))
-        if paired["new_item"]:
-            sections.append(paired_table(paired["new_item"]))
+        if paired_warm:
+            sections.append(paired_table(paired_warm))
+    paired_slices = {name: _paired(r, baselines, metric) for name, r in slice_results.items()}
+    for name, slice_res in slice_results.items():
+        if slice_res:
+            sections.append(f"## {name}\n\n" + results_table(slice_res, ks))
+            if paired_slices[name]:
+                sections.append(paired_table(paired_slices[name]))
     print("\n" + "\n\n".join(sections))
 
     if not args.save:
@@ -257,13 +283,13 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         "train": {"users": train.n_users, "items": train.n_items, "interactions": train.matrix.nnz},
         "cold_start": {**vars(stats), **shares},
         "results": [to_dict(r) for r in results],
-        "paired": [asdict(d) for d in paired["warm"]],
+        "paired": [asdict(d) for d in paired_warm],
     }
-    if new is not None:
-        report["new_item"] = {
-            **new_info,
-            "results": [to_dict(r) for r in new_results],
-            "paired": [asdict(d) for d in paired["new_item"]],
+    for name, (_, _, info) in slices.items():
+        report[name] = {
+            **info,
+            "results": [to_dict(r) for r in slice_results[name]],
+            "paired": [asdict(d) for d in paired_slices[name]],
         }
     (REPORTS_DIR / f"{args.save}.json").write_text(json.dumps(report, indent=2, default=str))
     (REPORTS_DIR / f"{args.save}.md").write_text("\n\n".join(sections) + "\n")
@@ -361,10 +387,11 @@ def main() -> None:
     ev.add_argument(
         "--slice",
         nargs="+",
-        choices=["warm", "new_item"],
+        choices=["warm", "new_item", "new_user"],
         default=["warm"],
         help="warm: known users x training catalog. new_item: known users x recipes "
-        "submitted during the evaluated window (only content-aware models can score them)",
+        "submitted during the evaluated window (only content-aware models can score them). "
+        "new_user: users not in training, ranked after their first --seed-recipes recipes",
     )
     ev.add_argument(
         "--baseline",
@@ -373,6 +400,9 @@ def main() -> None:
         metavar="SPEC",
         help="report each model's paired difference to the first of these model specs "
         "evaluated on each slice, e.g. `--baseline popularity random`",
+    )
+    ev.add_argument(
+        "--seed-recipes", type=int, default=1, help="history size for the new_user slice"
     )
     ev.add_argument("--k", nargs="+", type=int, default=[10, 20])
     ev.add_argument("--restrict", **restrict_kwargs)
