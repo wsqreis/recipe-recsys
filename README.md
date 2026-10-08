@@ -11,9 +11,29 @@ Data: [Food.com Recipes and Interactions](https://www.kaggle.com/datasets/shuyan
 | 1 | Data pipeline, temporal split, baselines, metrics, dietary restriction filter | ✅ |
 | 2 | Collaborative filtering with embeddings (iALS, two-tower) and ablations | ✅ |
 | 3 | Cold start: new recipes ✅ and new users ✅; natural-language search with a local LLM ✅; measuring the restriction filter ✅; weekly meal planning | ⏳ |
-| 4 | API (FastAPI), vector index, deployment, demo (Docker image already available) | ⏳ |
+| 4 | API (FastAPI) ✅, web app (React + TypeScript) ✅, local demo with Docker Compose ✅, vector index | ⏳ |
 
 ## Running
+
+### The web app
+
+```bash
+docker compose run --rm recsys prepare    # once: download Food.com into ./data
+docker compose run --rm recsys embed      # once: recipe text embeddings (~3 min on a GPU, longer on CPU)
+docker compose up app                     # http://localhost:8000, ready after ~1 minute
+```
+
+Natural-language search uses a local LLM through [Ollama](https://ollama.com) running on the host (`ollama pull ministral-3:8b`). Without it, search falls back to keywords and says so. The app runs locally only: the LLM needs a GPU, and the project has no hosted deployment.
+
+**Search:** a request in plain language is parsed by the LLM, and the parsed constraints are shown above the results. Every constraint is a hard filter.
+
+![Search: "something dairy-free with chicken, ready in 20 minutes", parsed as dairy-free, with chicken, at most 20 minutes](docs/screenshots/search.png)
+
+**For you:** pick restrictions and recipes you have cooked; recommendations update as you go, through iALS fold-in (no retraining). With no history, it shows popular recipes, which is what works best for a first visit (see [New users](#new-users-phase-3)).
+
+![For you: gluten-free, after two cooked recipes](docs/screenshots/for-you.png)
+
+The API behind it is documented at http://localhost:8000/docs. The front end (React + TypeScript + Vite) lives in [web/](web/).
 
 ### With Docker (any OS)
 
@@ -248,14 +268,18 @@ src/recipe_recsys/
   search.py         natural-language search: LLM parse (Ollama) + retrieval + hard filters
   search_eval.py    parsing and safety metrics on labeled requests (evaluation/)
   restriction_eval.py  restriction filter vs labeled recipes, with an LLM classifier
+  api.py            FastAPI app: search, recommendations for new users, recipe lookup
   metrics.py        recall, ndcg, hit rate, coverage
   evaluate.py       evaluation protocol, slices, masking, top-k, bootstrap intervals
   models/           random, popularity, recent_popularity, newest, itemknn, ials,
                     text_profile, two_tower
   cli.py            recsys prepare | embed | evaluate | recommend | search | eval-search
-                    | eval-restrictions
-tests/              metrics, leak-free split, restrictions and regressions
+                    | eval-restrictions | serve
+tests/              metrics, leak-free split, restrictions and regressions, API
+web/                React + TypeScript front end, served by the API
+evaluation/         labeled search requests and restriction labels, with the labeling policy
 reports/            evaluation results (.md versioned, .json ignored)
+docs/screenshots/   web app screenshots
 ```
 
 Every model implements the same interface (`fit` and `score`, plus `score_histories` for users outside training and `score_items` for content-aware models that can rank recipes outside the training catalog). Masking (already-seen items and restrictions) and top-k selection live outside the models, so every model gets exactly the same treatment during evaluation.

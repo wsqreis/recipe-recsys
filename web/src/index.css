@@ -210,6 +210,10 @@ nav button.active {
 }
 
 .card {
+  /* A <button> centers its content vertically; cards read better top-aligned. */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
   text-align: left;
   border: 1px solid var(--border);
   border-radius: 10px;
