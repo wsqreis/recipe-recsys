@@ -3,7 +3,7 @@
 export interface RecipeCard {
   recipe_id: number
   name: string
-  minutes: number
+  minutes: number | null // null when the dataset value is implausible
   ingredients: string[]
   calories: number | null
   score: number | null

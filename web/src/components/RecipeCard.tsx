@@ -13,7 +13,7 @@ export function RecipeCard({ recipe, onOpen }: Props) {
     <button className="card" onClick={() => onOpen(recipe.recipe_id)}>
       <h3>{titleCase(recipe.name)}</h3>
       <p className="meta">
-        {recipe.minutes} min
+        {recipe.minutes ?? '?'} min
         {recipe.calories !== null && <> · {Math.round(recipe.calories)} kcal</>}
         {' · '}
         {recipe.ingredients.length} ingredients

@@ -33,7 +33,7 @@ export function RecipeModal({ id, onClose }: Props) {
           <>
             <h2>{titleCase(recipe.name)}</h2>
             <p className="meta">
-              {recipe.minutes} min
+              {recipe.minutes ?? '?'} min
               {recipe.calories !== null && <> · {Math.round(recipe.calories)} kcal</>}
             </p>
             {recipe.description && <p className="description">{recipe.description}</p>}
