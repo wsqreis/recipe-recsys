@@ -11,7 +11,7 @@ Data: [Food.com Recipes and Interactions](https://www.kaggle.com/datasets/shuyan
 | 1 | Data pipeline, temporal split, baselines, metrics, dietary restriction filter | ✅ |
 | 2 | Collaborative filtering with embeddings (iALS, two-tower) and ablations | ✅ |
 | 3 | Cold start: new recipes and new users; natural-language search with a local LLM; measuring the restriction filter; weekly menu planning; data quality | ✅ |
-| 4 | API (FastAPI) ✅, web app (React + TypeScript) ✅, local demo with Docker Compose ✅, vector index | ⏳ |
+| 4 | API (FastAPI), web app (React + TypeScript), local demo with Docker Compose, vector index measured (not needed at this scale) | ✅ |
 
 ## Running
 
@@ -239,6 +239,23 @@ What this shows:
 3. **The recommender knows taste, not meal type.** The first version planned "dinners" such as chocolate frosting, guacamole and jalapeño poppers. Menus now default to recipes tagged `main-dish` (a third of the catalog). Tags are unreliable for safety (see below), but good enough for meal type.
 4. **Data quality is part of the result.** Before ingredient names were normalized, the same top 7 needed 47.2 shopping items and variety 0.5 + reuse 0.3 cost a significant 6% ([before](reports/val_menu.md)): reuse cannot see that "garlic cloves" and "garlic" are the same purchase.
 
+## Vector index: measured, not needed (phase 4)
+
+Search ranks all 231k recipe embeddings with one matrix-vector product and then applies the hard filters. `recsys bench-index` compares that with FAISS indexes, one query at a time on a single thread ([report](reports/index_bench.md)):
+
+| method | recall@10 vs. exact | median latency | build |
+|---|---|---|---|
+| numpy brute force (current) | 1.000 | 20 ms | — |
+| FAISS HNSW32, efSearch=64 | 0.979 | 0.27 ms | 46 s |
+| FAISS IVF1024, nprobe=16 | 0.938 | 0.58 ms | 46 s |
+
+HNSW is 75 times faster, and the app keeps brute force anyway, for two measured reasons:
+
+1. **Retrieval is not the bottleneck.** The LLM parse takes about 1,200 ms per request; an index would save about 20 ms of it (under 2%) and lose 2% of the right results.
+2. **Hard filters break approximate retrieval.** An ANN index returns the k nearest recipes and the filters come after. "Dairy-free, with chicken, at most 20 minutes" leaves 0.8% of the catalog, so the index would have to return about 1,255 candidates to keep 10; "vegan, gluten-free, at most 15 minutes" leaves 4.8%. Exact search with a mask is exact, simple and correct by construction.
+
+At tens of millions of recipes or high traffic this changes, and the right tool would be an index with filtering built in (FAISS `IDSelector`, or pgvector HNSW with a `WHERE` clause), not an ANN with filters bolted on afterwards.
+
 ## Data quality
 
 `recsys data-report` ([report](reports/data_quality.md)) on the 231,637 recipes:
@@ -309,13 +326,15 @@ src/recipe_recsys/
   restriction_eval.py  restriction filter vs labeled recipes, with an LLM classifier
   menu.py           weekly menu planning (relevance, variety, ingredient reuse)
   quality.py        ingredient normalization for shopping lists, implausible values
+  index_bench.py    exact search vs FAISS indexes, and the cost of filters for ANN
   api.py            FastAPI app: search, recommendations, weekly menu, recipe lookup
   metrics.py        recall, ndcg, hit rate, coverage
   evaluate.py       evaluation protocol, slices, masking, top-k, bootstrap intervals
   models/           random, popularity, recent_popularity, newest, itemknn, ials,
                     text_profile, two_tower
   cli.py            recsys prepare | embed | evaluate | recommend | search | eval-search
-                    | eval-restrictions | eval-menu | data-report | serve
+                    | eval-restrictions | eval-menu | data-report
+                    | bench-index | serve
 tests/              metrics, leak-free split, restrictions and regressions, API
 web/                React + TypeScript front end, served by the API
 evaluation/         labeled search requests and restriction labels, with the labeling policy

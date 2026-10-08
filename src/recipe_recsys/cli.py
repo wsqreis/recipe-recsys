@@ -151,6 +151,43 @@ def cmd_eval_menu(args: argparse.Namespace) -> None:
         print(f"\nsaved reports/{args.save}.md")
 
 
+def cmd_bench_index(args: argparse.Namespace) -> None:
+    from recipe_recsys.index_bench import bench_markdown, benchmark
+    from recipe_recsys.search import ParsedQuery, RecipeSearch, restriction_masks
+
+    recipes = data.load_recipes(columns=["recipe_id", "name", "ingredients", "minutes"])
+    vectors = load_text_embeddings(recipes["recipe_id"].to_numpy())
+    rng = np.random.default_rng(0)
+    queries = vectors[rng.choice(len(vectors), args.queries, replace=False)]
+    table = bench_markdown(benchmark(vectors, queries, args.k), len(vectors), args.queries, args.k)
+
+    # Share of the catalog that survives typical hard filters: an ANN index would have to
+    # return about k / share candidates for the filters to leave k results.
+    search = RecipeSearch(recipes, vectors, lambda text: vectors[0], restriction_masks(recipes))
+    filters = {
+        "no filter": ParsedQuery(),
+        "vegetarian": ParsedQuery(restrictions=["vegetarian"]),
+        "dairy-free, with chicken, <= 20 min": ParsedQuery(
+            restrictions=["lactose"], include=["chicken"], max_minutes=20
+        ),
+        "vegan, gluten-free, nut-free": ParsedQuery(restrictions=["vegan", "gluten", "nuts"]),
+        "vegan, gluten-free, <= 15 min": ParsedQuery(
+            restrictions=["vegan", "gluten"], max_minutes=15
+        ),
+    }
+    lines = ["", "| hard filters | catalog left | candidates an ANN index would need for k=10 |"]
+    lines.append("|---|---|---|")
+    for label, parsed in filters.items():
+        share = float(search.allowed(parsed).mean())
+        lines.append(f"| {label} | {share:.1%} | ~{int(np.ceil(10 / share)):,} |")
+    text = table + "\n" + "\n".join(lines)
+    print(text)
+    if args.save:
+        REPORTS_DIR.mkdir(exist_ok=True)
+        (REPORTS_DIR / f"{args.save}.md").write_text(text + "\n", encoding="utf-8")
+        print(f"\nsaved reports/{args.save}.md")
+
+
 def cmd_data_report(args: argparse.Namespace) -> None:
     from recipe_recsys.quality import quality_report
 
@@ -467,6 +504,12 @@ def main() -> None:
         "--no-llm", action="store_true", help="skip the LLM: keyword restrictions + raw text"
     )
     se.set_defaults(func=cmd_search)
+
+    bi = sub.add_parser("bench-index", help="exact search vs FAISS indexes (needs `index` extra)")
+    bi.add_argument("--queries", type=int, default=1000)
+    bi.add_argument("--k", type=int, default=10)
+    bi.add_argument("--save", metavar="NAME", help="write reports/NAME.md")
+    bi.set_defaults(func=cmd_bench_index)
 
     dq = sub.add_parser("data-report", help="data quality: ingredient names, implausible values")
     dq.add_argument("--save", metavar="NAME", help="write reports/NAME.md")
