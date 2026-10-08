@@ -38,6 +38,7 @@ from recipe_recsys.search import (
     parse_request,
     restriction_masks,
 )
+from recipe_recsys.search_eval import DEFAULT_QUERIES, evaluate_search, load_queries
 from recipe_recsys.split import k_core, temporal_split
 from recipe_recsys.text import DEFAULT_MODEL as DEFAULT_TEXT_MODEL
 from recipe_recsys.text import build_text_embeddings, load_text_embeddings, query_encoder
@@ -109,6 +110,17 @@ def cmd_search(args: argparse.Namespace) -> None:
     for rank, row in enumerate(results.itertuples(), 1):
         ingredients = ", ".join(row.ingredients[:6]) + (", ..." if len(row.ingredients) > 6 else "")
         print(f"  {rank:2}. {row.name}  [{row.minutes} min]  ({ingredients})")
+
+
+def cmd_eval_search(args: argparse.Namespace) -> None:
+    queries = load_queries(Path(args.queries))
+    report = evaluate_search(queries, OllamaParser(args.llm), _searcher())
+    text = f"LLM: {args.llm}\n\n" + report.markdown()
+    print(text)
+    if args.save:
+        REPORTS_DIR.mkdir(exist_ok=True)
+        (REPORTS_DIR / f"{args.save}.md").write_text(text + "\n", encoding="utf-8")
+        print(f"\nsaved reports/{args.save}.md")
 
 
 def cmd_evaluate(args: argparse.Namespace) -> None:
@@ -339,6 +351,12 @@ def main() -> None:
         "--no-llm", action="store_true", help="skip the LLM: keyword restrictions + raw text"
     )
     se.set_defaults(func=cmd_search)
+
+    es = sub.add_parser("eval-search", help="evaluate search parsing on labeled requests")
+    es.add_argument("--queries", default=str(DEFAULT_QUERIES))
+    es.add_argument("--llm", default=DEFAULT_LLM)
+    es.add_argument("--save", metavar="NAME", help="write reports/NAME.md")
+    es.set_defaults(func=cmd_eval_search)
 
     rec = sub.add_parser("recommend", help="recommend recipes for one user")
     rec.add_argument("--user", type=int, required=True)

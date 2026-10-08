@@ -1,0 +1,42 @@
+{"text": "algo sem lactose, com frango, em 20 min", "restrictions": ["lactose"], "include": ["chicken"], "exclude": [], "max_minutes": 20}
+{"text": "bolo de chocolate vegano", "restrictions": ["vegan"], "include": ["chocolate"], "exclude": [], "max_minutes": null}
+{"text": "sopa de legumes sem cogumelo pronta em meia hora", "restrictions": [], "include": [], "exclude": ["mushroom"], "max_minutes": 30}
+{"text": "jantar rápido sem glúten com arroz", "restrictions": ["gluten"], "include": ["rice"], "exclude": [], "max_minutes": null}
+{"text": "sou celíaca, quero uma sobremesa fácil", "restrictions": ["gluten"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "meu filho tem alergia a amendoim, ideias de lanche", "restrictions": ["nuts"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "lasanha de carne", "restrictions": [], "include": ["beef"], "exclude": [], "max_minutes": null}
+{"text": "receita vegetariana com grão de bico em até 40 minutos", "restrictions": ["vegetarian"], "include": ["chickpea"], "exclude": [], "max_minutes": 40}
+{"text": "café da manhã sem ovo e sem leite", "restrictions": ["egg", "lactose"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "tenho batata e bacon, o que faço em 1 hora?", "restrictions": [], "include": ["potato", "bacon"], "exclude": [], "max_minutes": 60}
+{"text": "salada sem cebola", "restrictions": [], "include": [], "exclude": ["onion"], "max_minutes": null}
+{"text": "peixe assado, nada de laticínios", "restrictions": ["lactose"], "include": ["fish"], "exclude": [], "max_minutes": null}
+{"text": "pão caseiro sem glúten e sem ovos", "restrictions": ["gluten", "egg"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "prato com camarão em 15 minutos", "restrictions": [], "include": ["shrimp"], "exclude": [], "max_minutes": 15}
+{"text": "algo leve, não como carne", "restrictions": ["vegetarian"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "receita com abacate, sou vegana", "restrictions": ["vegan"], "include": ["avocado"], "exclude": [], "max_minutes": null}
+{"text": "bolo de cenoura", "restrictions": [], "include": ["carrot"], "exclude": [], "max_minutes": null}
+{"text": "macarrão sem queijo pronto em 25 min", "restrictions": [], "include": [], "exclude": ["cheese"], "max_minutes": 25}
+{"text": "strogonoff de frango para intolerante a lactose", "restrictions": ["lactose"], "include": ["chicken"], "exclude": [], "max_minutes": null}
+{"text": "bolinho de chuva sem leite de vaca", "restrictions": ["lactose"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "peanut butter cookies", "restrictions": [], "include": ["peanut butter"], "exclude": [], "max_minutes": null}
+{"text": "quick vegan dinner under 30 minutes", "restrictions": ["vegan"], "include": [], "exclude": [], "max_minutes": 30}
+{"text": "gluten-free pizza", "restrictions": ["gluten"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "chicken curry without coconut", "restrictions": [], "include": ["chicken"], "exclude": ["coconut"], "max_minutes": null}
+{"text": "dairy-free mashed potatoes", "restrictions": ["lactose"], "include": ["potato"], "exclude": [], "max_minutes": null}
+{"text": "I have eggs, spinach and feta, something for breakfast", "restrictions": [], "include": ["egg", "spinach", "feta"], "exclude": [], "max_minutes": null}
+{"text": "nut-free brownies for a school bake sale", "restrictions": ["nuts"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "egg-free pancakes", "restrictions": ["egg"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "eggplant parmesan in under an hour", "restrictions": [], "include": ["eggplant"], "exclude": [], "max_minutes": 60}
+{"text": "something with salmon, no dairy, 45 minutes max", "restrictions": ["lactose"], "include": ["salmon"], "exclude": [], "max_minutes": 45}
+{"text": "vegetarian lasagna without mushrooms", "restrictions": ["vegetarian"], "include": [], "exclude": ["mushroom"], "max_minutes": null}
+{"text": "beef stew", "restrictions": [], "include": ["beef"], "exclude": [], "max_minutes": null}
+{"text": "my wife is lactose intolerant and I'm vegetarian, dinner ideas", "restrictions": ["lactose", "vegetarian"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "low carb chicken dinner", "restrictions": [], "include": ["chicken"], "exclude": [], "max_minutes": null}
+{"text": "kid-friendly snack, no peanuts or tree nuts", "restrictions": ["nuts"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "a recipe using leftover rice in 10 minutes", "restrictions": [], "include": ["rice"], "exclude": [], "max_minutes": 10}
+{"text": "plant-based protein bowl", "restrictions": ["vegan"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "shrimp pasta, I'm allergic to gluten", "restrictions": ["gluten"], "include": ["shrimp"], "exclude": [], "max_minutes": null}
+{"text": "cheesecake that's egg free", "restrictions": ["egg"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "dinner for two, no pork", "restrictions": [], "include": [], "exclude": ["pork"], "max_minutes": null}
+{"text": "I can't have milk or eggs, what can I bake?", "restrictions": ["lactose", "egg"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "spicy tofu stir fry, I don't eat animal products", "restrictions": ["vegan"], "include": ["tofu"], "exclude": [], "max_minutes": null}
