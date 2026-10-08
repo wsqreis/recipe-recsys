@@ -10,7 +10,7 @@ Data: [Food.com Recipes and Interactions](https://www.kaggle.com/datasets/shuyan
 |---|---|---|
 | 1 | Data pipeline, temporal split, baselines, metrics, dietary restriction filter | ✅ |
 | 2 | Collaborative filtering with embeddings (iALS, two-tower) and ablations | ✅ |
-| 3 | Cold start: new recipes ✅ and new users ✅; natural-language search with a local LLM ✅; measuring the restriction filter ✅; weekly meal planning | ⏳ |
+| 3 | Cold start: new recipes and new users; natural-language search with a local LLM; measuring the restriction filter; weekly menu planning; data quality | ✅ |
 | 4 | API (FastAPI) ✅, web app (React + TypeScript) ✅, local demo with Docker Compose ✅, vector index | ⏳ |
 
 ## Running
@@ -32,6 +32,10 @@ Natural-language search uses a local LLM through [Ollama](https://ollama.com) ru
 **For you:** pick restrictions and recipes you have cooked; recommendations update as you go, through iALS fold-in (no retraining). With no history, it shows popular recipes, which is what works best for a first visit (see [New users](#new-users-phase-3)).
 
 ![For you: gluten-free, after two cooked recipes](docs/screenshots/for-you.png)
+
+**Week:** a week of dinners from the same profile, with sliders for variety and ingredient reuse, per-meal calorie and time limits, and the shopping list (see [Weekly menu](#weekly-menu-phase-3)).
+
+![Week: seven gluten-free main dishes under 45 minutes and a 51-item shopping list](docs/screenshots/week.png)
 
 The API behind it is documented at http://localhost:8000/docs. The front end (React + TypeScript + Vite) lives in [web/](web/).
 
@@ -213,6 +217,41 @@ What this shows:
 4. **Measured honestly.** The v2 changes came from reading v1's errors on the development set, so v2 numbers on that set (100% recall, 0 violations, [search_v2](reports/search_v2.md)) are optimistic. The held-out set was written and committed before changing the parser, and is the number to trust. It is small (30 requests), so it shows the direction, not a guarantee.
 5. **Required ingredients are ambiguous, not unsafe.** Is "carrot" required in "bolo de cenoura" (carrot cake), or just the dish name? Both readings are defensible, and the label itself is the problem. This affects how narrow the search is, not safety.
 
+## Weekly menu (phase 3)
+
+A week of dinners is not the top 7 of a ranking. Three goals pull in different directions: **relevance** (what the recommender predicts), **variety** (seven near-identical chicken dishes make a bad week) and **ingredient reuse** (a shorter shopping list). The planner picks recipes greedily, in the spirit of maximal marginal relevance (Carbonell & Goldstein, 1998): each step adds the recipe with the best relevance, plus a bonus for the share of its ingredients already on the list, minus a penalty for its text-embedding similarity to the recipes already chosen. Restrictions and per-meal limits (calories, minutes) are hard filters.
+
+What does planning cost? `recsys eval-menu` scores each configuration's menus as a ranking (NDCG@7) on the warm validation slice, against the plain top 7 of iALS, with paired 95% intervals ([report](reports/val_menu_normalized.md)):
+
+| variety | reuse | NDCG@7 vs. top 7 | shopping list | similarity within the menu |
+|---|---|---|---|---|
+| 0 | 0 | — (0.0179) | 44.5 items | 0.37 |
+| 0.5 | 0 | −2% [−0.0010, +0.0004] | 45.8 | 0.34 |
+| 1.0 | 0 | −6% [−0.0021, −0.0002] | 46.8 | 0.32 |
+| 0 | 0.3 | −2% [−0.0010, +0.0004] | 40.6 | 0.39 |
+| 0 | 0.6 | −10% [−0.0031, −0.0006] | 34.4 | 0.40 |
+| 0.5 | 0.3 | −4% [−0.0014, +0.0001] | 41.7 | 0.35 |
+
+What this shows:
+
+1. **Moderate weights are nearly free.** Variety 0.5 or reuse 0.3 cost about 2% NDCG, within noise; the app defaults to both (−4%, not significant).
+2. **Variety and reuse fight each other.** Different dishes need different ingredients (the list grows with variety); sharing ingredients makes dishes alike (similarity grows with reuse). Choosing the point is a product decision, so the app exposes both as sliders.
+3. **The recommender knows taste, not meal type.** The first version planned "dinners" such as chocolate frosting, guacamole and jalapeño poppers. Menus now default to recipes tagged `main-dish` (a third of the catalog). Tags are unreliable for safety (see below), but good enough for meal type.
+4. **Data quality is part of the result.** Before ingredient names were normalized, the same top 7 needed 47.2 shopping items and variety 0.5 + reuse 0.3 cost a significant 6% ([before](reports/val_menu.md)): reuse cannot see that "garlic cloves" and "garlic" are the same purchase.
+
+## Data quality
+
+`recsys data-report` ([report](reports/data_quality.md)) on the 231,637 recipes:
+
+| issue | count | handling |
+|---|---|---|
+| distinct ingredient strings | 14,942 → 13,322 shopping items | normalized for shopping lists and menus only |
+| recipes with 0 minutes | 1,094 | shown as unknown, excluded by time limits |
+| recipes over one week | 256 (max 2,147,483,647, an error value) | shown as unknown |
+| over 3,000 kcal per serving | 3,151 (max 434,360) | shown as unknown (likely the whole recipe) |
+
+The normalization uses small, explicit rules (plural to singular, preparation words such as "minced" dropped, "garlic cloves" → "garlic", "lemon, juice of" → "lemon", egg whites and yolks → "egg"). The largest merges: "garlic" absorbs 10 strings, "chicken breast" 16. It is conservative on purpose: "crushed red pepper" (chili flakes) stays apart from peppers, "diced tomatoes" (usually canned) from tomatoes, "green onion" from "onion". The first version dropped "crushed" and "diced" and merged exactly those; the report made it visible. The restriction filter and the models keep the original text: their results were measured on it.
+
 ## Dietary restrictions
 
 Restrictions are a **hard filter applied after ranking**, not a score penalty: a forbidden recipe never shows up, however high it scores.
@@ -268,13 +307,15 @@ src/recipe_recsys/
   search.py         natural-language search: LLM parse (Ollama) + retrieval + hard filters
   search_eval.py    parsing and safety metrics on labeled requests (evaluation/)
   restriction_eval.py  restriction filter vs labeled recipes, with an LLM classifier
-  api.py            FastAPI app: search, recommendations for new users, recipe lookup
+  menu.py           weekly menu planning (relevance, variety, ingredient reuse)
+  quality.py        ingredient normalization for shopping lists, implausible values
+  api.py            FastAPI app: search, recommendations, weekly menu, recipe lookup
   metrics.py        recall, ndcg, hit rate, coverage
   evaluate.py       evaluation protocol, slices, masking, top-k, bootstrap intervals
   models/           random, popularity, recent_popularity, newest, itemknn, ials,
                     text_profile, two_tower
   cli.py            recsys prepare | embed | evaluate | recommend | search | eval-search
-                    | eval-restrictions | serve
+                    | eval-restrictions | eval-menu | data-report | serve
 tests/              metrics, leak-free split, restrictions and regressions, API
 web/                React + TypeScript front end, served by the API
 evaluation/         labeled search requests and restriction labels, with the labeling policy
