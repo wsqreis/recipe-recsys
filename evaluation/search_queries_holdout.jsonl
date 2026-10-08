@@ -1,0 +1,30 @@
+{"text": "jantar sem carne para hoje", "restrictions": ["vegetarian"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "eu não como nada de origem animal, sugestão de almoço", "restrictions": ["vegan"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "muffins de banana sem ovos, rapidinho, uns 30 minutos", "restrictions": ["egg"], "include": ["banana"], "exclude": [], "max_minutes": 30}
+{"text": "frango grelhado com legumes", "restrictions": [], "include": ["chicken"], "exclude": [], "max_minutes": null}
+{"text": "risoto de cogumelos sem queijo", "restrictions": [], "include": ["mushroom"], "exclude": ["cheese"], "max_minutes": null}
+{"text": "minha namorada é alérgica a castanhas, sobremesa de chocolate", "restrictions": ["nuts"], "include": ["chocolate"], "exclude": [], "max_minutes": null}
+{"text": "algo com atum pronto em 10 minutos", "restrictions": [], "include": ["tuna"], "exclude": [], "max_minutes": 10}
+{"text": "comida mexicana vegetariana", "restrictions": ["vegetarian"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "dessert without any dairy or eggs", "restrictions": ["lactose", "egg"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "keto-friendly breakfast", "restrictions": [], "include": [], "exclude": [], "max_minutes": null}
+{"text": "salmon with no butter", "restrictions": [], "include": ["salmon"], "exclude": ["butter"], "max_minutes": null}
+{"text": "I'm avoiding meat this month, pasta ideas?", "restrictions": ["vegetarian"], "include": ["pasta"], "exclude": [], "max_minutes": null}
+{"text": "lunch for someone with celiac disease", "restrictions": ["gluten"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "soup that takes less than 45 minutes, no beans", "restrictions": [], "include": [], "exclude": ["bean"], "max_minutes": 45}
+{"text": "something sweet, I'm lactose intolerant", "restrictions": ["lactose"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "brownie sem lactose e sem glúten", "restrictions": ["lactose", "gluten"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "pão de queijo", "restrictions": [], "include": ["cheese"], "exclude": [], "max_minutes": null}
+{"text": "omelete sem cebola", "restrictions": [], "include": [], "exclude": ["onion"], "max_minutes": null}
+{"text": "vegan curry with chickpeas", "restrictions": ["vegan"], "include": ["chickpea"], "exclude": [], "max_minutes": null}
+{"text": "no meat, no fish, but eggs and cheese are fine", "restrictions": ["vegetarian"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "almoço rápido sem nenhum tipo de laticínio", "restrictions": ["lactose"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "cookies for a kid with a tree nut allergy", "restrictions": ["nuts"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "chili without pork, under an hour", "restrictions": [], "include": [], "exclude": ["pork"], "max_minutes": 60}
+{"text": "uma salada com quinoa e sem tomate", "restrictions": [], "include": ["quinoa"], "exclude": ["tomato"], "max_minutes": null}
+{"text": "pancakes, but my son can't have milk", "restrictions": ["lactose"], "include": [], "exclude": [], "max_minutes": null}
+{"text": "torta de limão", "restrictions": [], "include": ["lemon"], "exclude": [], "max_minutes": null}
+{"text": "tofu scramble, plant based", "restrictions": ["vegan"], "include": ["tofu"], "exclude": [], "max_minutes": null}
+{"text": "grilled fish, dairy free, ready in 20", "restrictions": ["lactose"], "include": ["fish"], "exclude": [], "max_minutes": 20}
+{"text": "doce de abóbora sem açúcar", "restrictions": [], "include": ["pumpkin"], "exclude": ["sugar"], "max_minutes": null}
+{"text": "sanduíche vegetariano sem ovo", "restrictions": ["vegetarian", "egg"], "include": [], "exclude": [], "max_minutes": null}
