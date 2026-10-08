@@ -2,6 +2,15 @@
 # Build with TORCH=cpu (default) or TORCH=cuda. The CUDA variant ships the CUDA
 # runtime inside the PyTorch wheels, so the base image stays the same; the GPU
 # driver comes from the host (NVIDIA Container Toolkit / Docker Desktop + WSL2).
+
+# The web app (web/) is built in its own stage; only the static files reach the final image.
+FROM node:24-slim AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /uvx /bin/
@@ -25,6 +34,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --extra ${TORCH} --extra text --extra api
 
 COPY . .
+COPY --from=web /web/dist /app/web/dist
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --extra ${TORCH} --extra text --extra api
 
