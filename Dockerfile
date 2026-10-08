@@ -11,8 +11,9 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     PATH=/opt/venv/bin:$PATH \
-    # Keep the Kaggle download inside the mounted data volume.
+    # Keep the Kaggle download and the text model weights inside the mounted data volume.
     KAGGLEHUB_CACHE=/app/data/raw \
+    HF_HOME=/app/data/hf \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
@@ -21,11 +22,11 @@ WORKDIR /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --frozen --no-install-project --extra ${TORCH}
+    uv sync --frozen --no-install-project --extra ${TORCH} --extra text
 
 COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --extra ${TORCH}
+    uv sync --frozen --extra ${TORCH} --extra text
 
 ENTRYPOINT ["recsys"]
 CMD ["--help"]

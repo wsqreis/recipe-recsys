@@ -21,6 +21,8 @@ from recipe_recsys.evaluate import (
 from recipe_recsys.models import build_model
 from recipe_recsys.restrictions import RESTRICTIONS, allowed_mask, get_restrictions
 from recipe_recsys.split import k_core, temporal_split
+from recipe_recsys.text import DEFAULT_MODEL as DEFAULT_TEXT_MODEL
+from recipe_recsys.text import build_text_embeddings
 
 DEFAULT_MODELS = [
     "random",
@@ -51,6 +53,11 @@ def _allowed_for(
 
 def cmd_prepare(_: argparse.Namespace) -> None:
     data.prepare()
+
+
+def cmd_embed(args: argparse.Namespace) -> None:
+    path = build_text_embeddings(args.model, batch_size=args.batch_size)
+    print(f"saved {path}")
 
 
 def cmd_evaluate(args: argparse.Namespace) -> None:
@@ -153,6 +160,11 @@ def main() -> None:
     sub.add_parser("prepare", help="download Food.com and cache it as parquet").set_defaults(
         func=cmd_prepare
     )
+
+    emb = sub.add_parser("embed", help="encode recipe text with a sentence encoder (cached)")
+    emb.add_argument("--model", default=DEFAULT_TEXT_MODEL)
+    emb.add_argument("--batch-size", type=int, default=256)
+    emb.set_defaults(func=cmd_embed)
 
     restrict_kwargs = {
         "nargs": "*",

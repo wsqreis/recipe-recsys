@@ -16,6 +16,9 @@ dependencies = [
 [project.optional-dependencies]
 cpu = ["torch>=2.14.1"]
 cuda = ["torch>=2.14.1"]
+text = [
+    "sentence-transformers>=6.1.0",
+]
 
 [project.scripts]
 recsys = "recipe_recsys.cli:main"
