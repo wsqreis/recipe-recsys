@@ -12,6 +12,11 @@ services:
     volumes:
       - ./data:/app/data
       - ./reports:/app/reports
+    # `recsys search` talks to Ollama running on the host.
+    environment:
+      RECSYS_OLLAMA_URL: ${RECSYS_OLLAMA_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   recsys-gpu:
     extends: recsys

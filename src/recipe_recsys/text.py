@@ -67,6 +67,14 @@ def build_text_embeddings(
     return path
 
 
+def query_encoder(model: str = DEFAULT_MODEL, device: str | None = None):
+    """str -> unit-norm float32 vector, in the same space as the cached recipe embeddings."""
+    from sentence_transformers import SentenceTransformer
+
+    encoder = SentenceTransformer(model, device=device)
+    return lambda text: encoder.encode(text, normalize_embeddings=True).astype(np.float32)
+
+
 def load_text_embeddings(
     recipe_ids: np.ndarray, model: str = DEFAULT_MODEL, data_dir: Path = DATA_DIR
 ) -> np.ndarray:

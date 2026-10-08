@@ -30,9 +30,17 @@ from recipe_recsys.evaluate import (
 )
 from recipe_recsys.models import Recommender, build_model
 from recipe_recsys.restrictions import RESTRICTIONS, allowed_mask, get_restrictions
+from recipe_recsys.search import (
+    DEFAULT_LLM,
+    OllamaParser,
+    RecipeSearch,
+    as_dict,
+    parse_request,
+    restriction_masks,
+)
 from recipe_recsys.split import k_core, temporal_split
 from recipe_recsys.text import DEFAULT_MODEL as DEFAULT_TEXT_MODEL
-from recipe_recsys.text import build_text_embeddings, load_text_embeddings
+from recipe_recsys.text import build_text_embeddings, load_text_embeddings, query_encoder
 
 DEFAULT_MODELS = [
     "random",
@@ -81,6 +89,26 @@ def cmd_prepare(_: argparse.Namespace) -> None:
 def cmd_embed(args: argparse.Namespace) -> None:
     path = build_text_embeddings(args.model, batch_size=args.batch_size)
     print(f"saved {path}")
+
+
+def _searcher() -> RecipeSearch:
+    recipes = data.load_recipes(columns=["recipe_id", "name", "ingredients", "minutes"])
+    vectors = load_text_embeddings(recipes["recipe_id"].to_numpy())
+    return RecipeSearch(recipes, vectors, query_encoder(), restriction_masks(recipes))
+
+
+def cmd_search(args: argparse.Namespace) -> None:
+    parser = None if args.no_llm else OllamaParser(args.llm)
+    parsed, keywords = parse_request(args.request, parser)
+    print(f"parsed: {json.dumps(as_dict(parsed), ensure_ascii=False)}")
+    if keywords:
+        print(f"restrictions found by keywords: {sorted(keywords)}")
+    results = _searcher().search(parsed, k=args.n)
+    if results.empty:
+        print("no recipe satisfies every constraint")
+    for rank, row in enumerate(results.itertuples(), 1):
+        ingredients = ", ".join(row.ingredients[:6]) + (", ..." if len(row.ingredients) > 6 else "")
+        print(f"  {rank:2}. {row.name}  [{row.minutes} min]  ({ingredients})")
 
 
 def cmd_evaluate(args: argparse.Namespace) -> None:
@@ -302,6 +330,15 @@ def main() -> None:
     ev.add_argument("--min-user", type=int, default=5)
     ev.add_argument("--min-item", type=int, default=5)
     ev.set_defaults(func=cmd_evaluate)
+
+    se = sub.add_parser("search", help="natural-language recipe search (LLM parse + hard filters)")
+    se.add_argument("request", help='e.g. "algo sem lactose, com frango, em 20 min"')
+    se.add_argument("--n", type=int, default=10)
+    se.add_argument("--llm", default=DEFAULT_LLM, help="Ollama model used to parse the request")
+    se.add_argument(
+        "--no-llm", action="store_true", help="skip the LLM: keyword restrictions + raw text"
+    )
+    se.set_defaults(func=cmd_search)
 
     rec = sub.add_parser("recommend", help="recommend recipes for one user")
     rec.add_argument("--user", type=int, required=True)
