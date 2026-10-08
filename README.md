@@ -10,7 +10,7 @@ Data: [Food.com Recipes and Interactions](https://www.kaggle.com/datasets/shuyan
 |---|---|---|
 | 1 | Data pipeline, temporal split, baselines, metrics, dietary restriction filter | ✅ |
 | 2 | Collaborative filtering with embeddings (iALS, two-tower) and ablations | ✅ |
-| 3 | Content embeddings for cold start (new recipes ✅, new users next), natural-language search with a local LLM ✅, measuring the restriction filter ✅, weekly meal planning | ⏳ |
+| 3 | Cold start: new recipes ✅ and new users ✅; natural-language search with a local LLM ✅; measuring the restriction filter ✅; weekly meal planning | ⏳ |
 | 4 | API (FastAPI), vector index, deployment, demo (Docker image already available) | ⏳ |
 
 ## Running
@@ -131,7 +131,25 @@ What this shows:
 5. **Embeddings capture topic, not safety.** Among the nearest neighbors of "gluten free banana bread" is "gluten free banana muffins", whose ingredient list includes all-purpose flour: the text says gluten-free, the ingredients do not, and the embedding follows the text. Dietary restrictions stay a rule-based hard filter over ingredients.
 6. **The first slice design measured nothing.** It used every recipe outside the training catalog as a candidate (194k, mostly long-tail recipes removed by the k-core), and every model, random included, got a hit for 2 to 6 of 2,842 users. It was replaced by the new-recipe slice; the confidence intervals are what made the problem visible.
 
-These models have not been run on test yet: their configuration is not final, and new **users** (the 79%) are the next step.
+These models have not been run on test yet: their configuration is not final.
+
+## New users (phase 3)
+
+Most evaluation interactions come from users who do not exist in training. A user with no history can only get non-personalized recommendations, so the `new_user` slice reproduces the first moment personalization is possible: the user has cooked their first N recipes (`--seed-recipes N`), and the models rank what they cook next. Every model can score a history it was not trained on (`score_histories`): iALS folds the user in with the same closed-form update it uses in training, ItemKNN sums item similarities, the two-tower runs its user tower, and no model is retrained.
+
+Validation, paired difference in NDCG@10 against popularity ([seed 1](reports/val_new_user_seed1.md), [seed 3](reports/val_new_user_seed3.md), [seed 5](reports/val_new_user_seed5.md)):
+
+| history | new users | popularity NDCG@10 | itemknn | ials | two_tower |
+|---|---|---|---|---|---|
+| 1 recipe | 2,826 | 0.0254 | +14% [−0.0012, +0.0085] | +1% [−0.0027, +0.0035] | −4% [−0.0035, +0.0012] |
+| 3 recipes | 678 | 0.0252 | −2% [−0.0076, +0.0062] | +9% [−0.0036, +0.0081] | −1% [−0.0061, +0.0053] |
+| 5 recipes | 282 | 0.0287 | +8% [−0.0050, +0.0104] | +16% [−0.0032, +0.0122] | −6% [−0.0087, +0.0061] |
+
+What this shows:
+
+1. **After one recipe, nothing beats popularity.** One data point says little about taste. `text_profile` is significantly worse (−61%): similarity to a single recipe recommends near-duplicates of it.
+2. **iALS drifts away from popularity as the history grows** (+1% → +9% → +16%), but no difference is significant: the sample shrinks as fast as the signal grows.
+3. **Most new users never build a history.** Of the 2,826 new users with at least 2 catalog recipes in the window, only 678 reach 4 and 282 reach 6. For most users, popularity filtered by their restrictions is the right default; the lever is product (ask preferences at sign-up), not a better model.
 
 ## Natural-language search (phase 3)
 
@@ -238,6 +256,6 @@ tests/              metrics, leak-free split, restrictions and regressions
 reports/            evaluation results (.md versioned, .json ignored)
 ```
 
-Every model implements the same interface (`fit` and `score`, plus `score_items` for content-aware models that can rank recipes outside the training catalog). Masking (already-seen items and restrictions) and top-k selection live outside the models, so every model gets exactly the same treatment during evaluation.
+Every model implements the same interface (`fit` and `score`, plus `score_histories` for users outside training and `score_items` for content-aware models that can rank recipes outside the training catalog). Masking (already-seen items and restrictions) and top-k selection live outside the models, so every model gets exactly the same treatment during evaluation.
 
 An engineering note: ItemKNN's item × item co-occurrence matrix has about 10⁸ non-zeros. It is built one block of rows at a time and pruned to the top-k neighbors before the next block, which keeps peak memory at about 1.5 GB.
