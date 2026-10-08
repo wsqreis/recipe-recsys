@@ -66,8 +66,10 @@ _MEAT = (
     "ribs", "gelatin", "lard", "suet", "bone broth", "beef broth", "chicken broth",
     "chicken stock", "beef stock", "bouillon", "meatball", "meatloaf", "kielbasa", "andouille",
     "bratwurst", "pastrami", "jerky", "liver", "giblets", "sirloin", "ribeye", "spam",
-    "drumstick",
+    "drumstick", "hamburger",
 )
+# "Hamburger buns" are bread, not meat.
+_MEAT_LOOKALIKES = ("hamburger bun", "hamburger roll")
 _SEAFOOD = (
     "fish", "salmon", "tuna", "cod", "tilapia", "halibut", "trout", "anchovy", "anchovies",
     "sardine", "mackerel", "shrimp", "prawn", "crab", "lobster", "clam", "mussel", "oyster",
@@ -84,6 +86,8 @@ _DAIRY = (
     "creme fraiche", "crème fraîche", "mascarpone", "gruyere", "gouda", "romano", "asiago",
     "provolone", "paneer", "queso", "kefir", "velveeta", "dulce de leche", "ganache",
     "cool whip", "whipped topping", "chocolate chip", "white chocolate", "margarine",
+    # Processed products found by measuring the filter (evaluation/restriction_labels.jsonl).
+    "sherbet", "almond bark", "ranch dressing", "ravioli", "tortellini",
 )
 _DAIRY_LOOKALIKES = (
     "coconut milk", "coconut cream", "almond milk", "soy milk", "soymilk", "rice milk",
@@ -93,6 +97,7 @@ _DAIRY_LOOKALIKES = (
 _EGG = (
     "egg", "eggs", "egg white", "egg yolk", "mayonnaise", "mayo", "meringue", "eggnog",
     "aioli", "hollandaise", "custard", "brioche", "challah", "ladyfinger",
+    "ravioli", "tortellini", "poundcake", "pound cake", "vanilla wafer", "ranch dressing",
 )
 _GLUTEN = (
     "wheat", "flour", "bread", "breadcrumbs", "bread crumbs", "panko", "crouton", "pasta",
@@ -106,7 +111,9 @@ _GLUTEN = (
     "ziti", "vermicelli", "udon", "ramen", "wonton", "dumpling", "matzo", "stuffing", "bisquick",
     "pancake", "cupcake", "cheesecake", "shortcake", "cornbread", "flatbread", "shortbread",
     "gingerbread", "breadstick", "piecrust", "hoisin sauce", "gravy", "roux", "bran", "durum",
-    "farro", "kamut", "triticale",
+    "farro", "kamut", "triticale", "breadcrumb", "poundcake", "ditalini", "tart shell",
+    # Commercial asafoetida powder is usually cut with wheat flour.
+    "asafoetida",
     # Condensed "cream of ..." soups are thickened with wheat flour.
     "cream of mushroom soup", "cream of chicken soup", "cream of celery soup",
 )
@@ -129,12 +136,13 @@ RESTRICTIONS: dict[str, Restriction] = {
         Restriction(
             "vegetarian",
             _MEAT + _SEAFOOD,
+            allowed=_MEAT_LOOKALIKES,
             free_markers=("vegetarian", "vegan", "meatless", "meat-free", "plant-based"),
         ),
         Restriction(
             "vegan",
             _MEAT + _SEAFOOD + _DAIRY + _EGG + ("honey",),
-            allowed=_DAIRY_LOOKALIKES,
+            allowed=_DAIRY_LOOKALIKES + _MEAT_LOOKALIKES,
             free_markers=("vegan", "plant-based"),
         ),
         Restriction(
