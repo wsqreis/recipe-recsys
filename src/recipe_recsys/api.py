@@ -7,7 +7,7 @@ is built once at startup into a `ServingState`. `create_app` takes that state
 as an argument, so tests can serve a four-recipe catalog without loading data,
 the sentence encoder or the LLM.
 
-Recommendations are for users who are not in the data: the request carries the
+Recommendations and weekly menus are for users who are not in the data: the request carries the
 recipes the person has cooked, and iALS folds them in (the same closed-form
 update as in training, no retraining). With no history, it falls back to
 popularity, which phase 3 showed is what works best for a first visit.
@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from recipe_recsys.dataset import InteractionData
+from recipe_recsys.menu import MenuConfig, ingredient_matrix, plan_menu
 from recipe_recsys.models import Recommender
 from recipe_recsys.restrictions import RESTRICTIONS
 from recipe_recsys.search import OllamaParser, ParsedQuery, RecipeSearch, as_dict, parse_request
@@ -90,6 +91,29 @@ class RecommendResponse(BaseModel):
     results: list[RecipeCard]
 
 
+class MenuRequest(BaseModel):
+    cooked: list[int] = Field(default=[], max_length=200)
+    restrictions: list[str] = []
+    size: int = Field(default=7, ge=1, le=14)
+    variety: float = Field(default=0.5, ge=0, le=2)
+    reuse: float = Field(default=0.3, ge=0, le=2)
+    max_calories: float | None = Field(default=None, gt=0)
+    max_minutes: int | None = Field(default=None, gt=0)
+    # The recommender knows taste, not meal type: without this, a week of dinners can
+    # include frosting and dips. Food.com tags are unreliable for safety, fine for this.
+    main_dishes_only: bool = True
+
+
+class MenuResponse(BaseModel):
+    strategy: str
+    used_history: list[int]
+    ignored_history: list[int]
+    days: list[RecipeCard]
+    shopping_list: list[str]
+    mean_calories: float | None
+    mean_similarity: float  # pairwise text similarity within the menu (lower = more varied)
+
+
 # ---- app ----------------------------------------------------------------------------------
 
 
@@ -109,6 +133,46 @@ def _card(recipes: pd.DataFrame, recipe_id: int, score: float | None = None) -> 
 def create_app(state: ServingState) -> FastAPI:
     app = FastAPI(title="recipe-recsys", version="0.1.0")
     recipes = state.recipes
+    catalog_ids = state.catalog.item_ids
+    # Catalog-aligned views of what search already holds, for menus and filters.
+    positions = state.search.positions(catalog_ids)
+    catalog_text = state.search.vectors[positions]
+    catalog_ingredients, ingredient_names = ingredient_matrix(
+        recipes.loc[catalog_ids, "ingredients"].tolist()
+    )
+    catalog_minutes = recipes.loc[catalog_ids, "minutes"].to_numpy()
+    catalog_calories = recipes.loc[catalog_ids, "calories"].to_numpy(dtype=float)
+    if "tags" in recipes:
+        catalog_main = recipes.loc[catalog_ids, "tags"].map(lambda t: "main-dish" in t)
+        catalog_main = catalog_main.to_numpy(dtype=bool)
+    else:
+        catalog_main = np.ones(len(catalog_ids), dtype=bool)
+
+    def catalog_scores(
+        cooked: list[int], restrictions: list[str]
+    ) -> tuple[np.ndarray, str, list[int], list[int]]:
+        """Scores over the catalog for a visitor, with restrictions already applied."""
+        unknown = set(restrictions) - RESTRICTIONS.keys()
+        if unknown:
+            raise HTTPException(422, f"unknown restrictions {sorted(unknown)}")
+        index = state.catalog.item_index
+        used = [r for r in dict.fromkeys(cooked) if r in index]
+        ignored = [r for r in dict.fromkeys(cooked) if r not in index]
+        if used:
+            cols = np.array([index[r] for r in used])
+            history = sp.csr_matrix(
+                (np.ones(len(cols), dtype=np.float32), (np.zeros(len(cols), dtype=int), cols)),
+                shape=(1, state.catalog.n_items),
+            )
+            scores = np.asarray(state.model.score_histories(history), dtype=np.float32)[0]
+            scores[cols] = -np.inf  # already cooked
+            strategy = "personalized"
+        else:
+            scores = state.popularity.astype(np.float32).copy()
+            strategy = "popularity"
+        allowed = state.search.allowed(ParsedQuery(restrictions=sorted(restrictions)))
+        scores[~allowed[positions]] = -np.inf
+        return scores, strategy, used, ignored
 
     @app.get("/api/health")
     def health() -> dict:
@@ -143,45 +207,45 @@ def create_app(state: ServingState) -> FastAPI:
 
     @app.post("/api/recommend")
     def recommend(request: RecommendRequest) -> RecommendResponse:
-        unknown = set(request.restrictions) - RESTRICTIONS.keys()
-        if unknown:
-            raise HTTPException(422, f"unknown restrictions {sorted(unknown)}")
-        index = state.catalog.item_index
-        used = [r for r in dict.fromkeys(request.cooked) if r in index]
-        ignored = [r for r in dict.fromkeys(request.cooked) if r not in index]
-
-        n_items = state.catalog.n_items
-        if used:
-            cols = np.array([index[r] for r in used])
-            history = sp.csr_matrix(
-                (np.ones(len(cols), dtype=np.float32), (np.zeros(len(cols), dtype=int), cols)),
-                shape=(1, n_items),
-            )
-            scores = np.asarray(state.model.score_histories(history), dtype=np.float32)[0]
-            scores[cols] = -np.inf  # already cooked
-            strategy = "personalized"
-        else:
-            scores = state.popularity.astype(np.float32).copy()
-            strategy = "popularity"
-
-        # Same masks as search, aligned to the catalog through recipe ids.
-        positions = state.search.positions(state.catalog.item_ids)
-        allowed = state.search.allowed(ParsedQuery(restrictions=sorted(request.restrictions)))
-        scores[~allowed[positions]] = -np.inf
-
+        scores, strategy, used, ignored = catalog_scores(request.cooked, request.restrictions)
         top = np.argsort(-scores, kind="stable")[: request.n]
         top = top[np.isfinite(scores[top])]
         return RecommendResponse(
             strategy=strategy,
             used_history=used,
             ignored_history=ignored,
-            results=[_card(recipes, state.catalog.item_ids[i], float(scores[i])) for i in top],
+            results=[_card(recipes, catalog_ids[i], float(scores[i])) for i in top],
+        )
+
+    @app.post("/api/menu")
+    def menu(request: MenuRequest) -> MenuResponse:
+        scores, strategy, used, ignored = catalog_scores(request.cooked, request.restrictions)
+        # Per-meal limits are hard filters; zero-minute recipes are data errors.
+        allowed = np.isfinite(scores)
+        if request.max_minutes is not None:
+            allowed &= (catalog_minutes > 0) & (catalog_minutes <= request.max_minutes)
+        if request.max_calories is not None:
+            allowed &= catalog_calories <= request.max_calories
+        if request.main_dishes_only:
+            allowed &= catalog_main
+        config = MenuConfig(size=request.size, variety=request.variety, reuse=request.reuse)
+        planned = plan_menu(scores, catalog_ingredients, catalog_text, config, allowed)
+        days = [_card(recipes, catalog_ids[i]) for i in planned.picks]
+        calories = [d.calories for d in days if d.calories is not None]
+        return MenuResponse(
+            strategy=strategy,
+            used_history=used,
+            ignored_history=ignored,
+            days=days,
+            shopping_list=sorted(ingredient_names[c] for c in planned.basket),
+            mean_calories=float(np.mean(calories)) if calories else None,
+            mean_similarity=planned.mean_similarity,
         )
 
     @app.get("/api/recipes")
     def find_recipes(q: str = "", n: int = 20) -> list[RecipeCard]:
         """Name lookup among recipes the recommender knows, most cooked first."""
-        ids = state.catalog.item_ids
+        ids = catalog_ids
         names = recipes.loc[ids, "name"].str.lower().to_numpy()
         terms = q.lower().split()
         match = np.array([all(t in name for t in terms) for name in names], dtype=bool)

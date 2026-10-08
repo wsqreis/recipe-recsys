@@ -38,6 +38,26 @@ export interface RecommendResponse {
   results: RecipeCard[]
 }
 
+export interface MenuRequest {
+  cooked: number[]
+  restrictions: string[]
+  variety: number
+  reuse: number
+  max_calories: number | null
+  max_minutes: number | null
+  main_dishes_only: boolean
+}
+
+export interface MenuResponse {
+  strategy: 'personalized' | 'popularity'
+  used_history: number[]
+  ignored_history: number[]
+  days: RecipeCard[]
+  shopping_list: string[]
+  mean_calories: number | null
+  mean_similarity: number
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -61,6 +81,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ cooked, restrictions, n: 12 }),
     }),
+  menu: (body: MenuRequest) =>
+    request<MenuResponse>('/api/menu', { method: 'POST', body: JSON.stringify(body) }),
   findRecipes: (q: string) =>
     request<RecipeCard[]>(`/api/recipes?q=${encodeURIComponent(q)}&n=8`),
   recipe: (id: number) => request<RecipeDetail>(`/api/recipes/${id}`),

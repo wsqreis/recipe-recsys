@@ -25,6 +25,7 @@ RECIPES = pd.DataFrame(
         ],
         "minutes": [15, 20, 25, 60],
         "calories": [500.0, 300.0, 250.0, 700.0],
+        "tags": [["main-dish"], ["main-dish"], ["soups-stews"], ["main-dish"]],
     }
 )
 
@@ -108,3 +109,21 @@ def test_recipe_lookup_and_detail():
     assert set(names) == {"creamy chicken", "lemon chicken", "chicken pie"}
     assert client.get("/api/recipes/30").json()["name"] == "bean stew"
     assert client.get("/api/recipes/999").status_code == 404
+
+
+def test_menu_respects_limits_and_returns_a_shopping_list():
+    client = TestClient(create_app(_state()))
+    request = {"size": 3, "max_calories": 400, "main_dishes_only": False}
+    body = client.post("/api/menu", json=request).json()
+    # Only recipes 20 (300 kcal) and 30 (250 kcal) fit the calorie limit.
+    assert {d["recipe_id"] for d in body["days"]} == {20, 30}
+    assert {"chicken breasts", "lemon", "beans", "tomato"} == set(body["shopping_list"])
+    assert body["mean_calories"] == 275.0
+
+    request = {"size": 4, "restrictions": ["vegetarian"], "main_dishes_only": False}
+    body = client.post("/api/menu", json=request).json()
+    assert [d["recipe_id"] for d in body["days"]] == [30]
+
+    # By default only main dishes: the bean stew (30) is tagged as a soup.
+    body = client.post("/api/menu", json={"size": 4}).json()
+    assert 30 not in [d["recipe_id"] for d in body["days"]]

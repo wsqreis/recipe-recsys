@@ -29,9 +29,10 @@ from recipe_recsys.models import Recommender
 # Not worth a line on a shopping list.
 PANTRY = frozenset(
     {
-        "salt", "pepper", "black pepper", "salt and pepper", "water", "oil", "olive oil",
-        "vegetable oil", "canola oil", "extra virgin olive oil", "sugar", "ice", "cooking spray",
-        "kosher salt", "sea salt", "fresh ground black pepper", "ground black pepper",
+        "salt", "pepper", "black pepper", "salt and pepper", "salt & pepper", "water", "oil",
+        "olive oil", "vegetable oil", "canola oil", "extra virgin olive oil", "sugar", "ice",
+        "cooking spray", "kosher salt", "sea salt", "fresh ground black pepper",
+        "ground black pepper",
     }
 )  # fmt: skip
 

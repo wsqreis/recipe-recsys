@@ -242,7 +242,7 @@ nav button.active {
   font-size: 0.85rem;
 }
 
-.for-you .panel {
+.panel {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
@@ -343,4 +343,71 @@ nav button.active {
 
 .description {
   color: var(--muted);
+}
+
+.week .controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 24px;
+  padding: 16px;
+}
+
+.controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+
+.controls small {
+  color: var(--muted);
+}
+
+.controls select {
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
+.controls input[type='range'] {
+  accent-color: var(--accent);
+}
+
+.day {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.day .card {
+  flex: 1;
+}
+
+.day-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.shopping {
+  margin-top: 16px;
+}
+
+.shopping ul {
+  columns: 4 180px;
+  padding-left: 18px;
+  margin: 0;
+}
+
+.controls label.inline {
+  display: block;
+}
+
+.controls label.inline small {
+  display: block;
 }
