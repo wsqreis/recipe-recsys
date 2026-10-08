@@ -29,7 +29,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from recipe_recsys.data import NUTRITION_COLUMNS
-from recipe_recsys.dataset import InteractionData
+from recipe_recsys.dataset import InteractionData, ItemPool
 from recipe_recsys.models.base import Recommender
 
 
@@ -57,23 +57,39 @@ class _ItemTower(nn.Module):
         n_numeric: int,
         dim: int,
         use_content: bool = True,
+        n_text: int = 0,
     ):
         super().__init__()
         self.use_content = use_content
+        self.dim = dim
         self.ids = nn.Embedding(n_items, dim)
         if use_content:
             self.ingredients = nn.EmbeddingBag(n_ingredients + 1, dim, mode="mean", padding_idx=0)
             self.tags = nn.EmbeddingBag(n_tags + 1, dim, mode="mean", padding_idx=0)
             self.numeric = nn.Linear(n_numeric, dim)
-        n_parts = 4 if use_content else 1
+        self.text = nn.Linear(n_text, dim) if n_text else None
+        n_parts = (4 if use_content else 1) + (1 if n_text else 0)
         self.mlp = nn.Sequential(
             nn.Linear(n_parts * dim, 2 * dim), nn.ReLU(), nn.Linear(2 * dim, dim)
         )
 
-    def forward(self, items, ingredients, tags, numeric):
-        parts = [self.ids(items)]
+    def forward(self, items, ingredients, tags, numeric, text=None, id_keep=None):
+        """`items=None` encodes recipes without a trained id (cold start) from content only.
+
+        `id_keep` (0/1 per row) hides the id of some rows during training, so the
+        tower learns to produce useful vectors when the id is missing.
+        """
+        if items is None:
+            id_vec = torch.zeros(len(numeric), self.dim, device=numeric.device)
+        else:
+            id_vec = self.ids(items)
+            if id_keep is not None:
+                id_vec = id_vec * id_keep.unsqueeze(1)
+        parts = [id_vec]
         if self.use_content:
             parts += [self.ingredients(ingredients), self.tags(tags), self.numeric(numeric)]
+        if self.text is not None:
+            parts.append(self.text(text))
         return F.normalize(self.mlp(torch.cat(parts, dim=1)), dim=1)
 
 
@@ -108,6 +124,10 @@ class TwoTowerRecommender(Recommender):
         # Ablation switches (1 = on, 0 = off).
         content: int = 1,
         logq: int = 1,
+        # Phase 3: sentence embeddings of the recipe text, and the share of training
+        # examples whose recipe id is hidden (needed to score recipes without an id).
+        text: int = 0,
+        id_dropout: float = 0.0,
     ):
         self.dim = dim
         self.epochs = epochs
@@ -120,28 +140,54 @@ class TwoTowerRecommender(Recommender):
         self.device = device
         self.content = content
         self.logq = logq
+        self.text = text
+        self.id_dropout = id_dropout
+
+    @property
+    def needs_text(self) -> bool:
+        return bool(self.text)
 
     # ---- features -------------------------------------------------------------------------
 
-    def _item_features(self, content: pd.DataFrame) -> None:
-        ingredient_vocab = _vocab(content["ingredients"], self.min_token_count)
-        tag_vocab = _vocab(content["tags"], self.min_token_count)
-        self._ingredients = _padded(content["ingredients"], ingredient_vocab)
-        self._tags = _padded(content["tags"], tag_vocab)
-        self._n_vocab = (len(ingredient_vocab), len(tag_vocab))
+    def _fit_features(self, content: pd.DataFrame) -> None:
+        """Vocabularies and numeric scaling come from the training catalog only."""
+        self._ingredient_vocab = _vocab(content["ingredients"], self.min_token_count)
+        self._tag_vocab = _vocab(content["tags"], self.min_token_count)
+        self._n_vocab = (len(self._ingredient_vocab), len(self._tag_vocab))
+        numeric = self._log_numeric(content)
+        self._numeric_mean, self._numeric_std = numeric.mean(0), numeric.std(0)
 
+    @staticmethod
+    def _log_numeric(content: pd.DataFrame) -> np.ndarray:
         numeric = content[NUTRITION_COLUMNS + ["minutes", "n_steps", "n_ingredients"]]
         # Heavy tails (one recipe takes 2 billion minutes): log, then standardize.
-        numeric = np.log1p(numeric.clip(lower=0, upper=1e5).to_numpy(dtype=np.float32))
-        numeric = (numeric - numeric.mean(0)) / (numeric.std(0) + 1e-6)
-        self._numeric = torch.from_numpy(numeric.astype(np.float32))
+        return np.log1p(numeric.clip(lower=0, upper=1e5).to_numpy(dtype=np.float32))
 
-    def _encode_items(self, rows: torch.Tensor) -> torch.Tensor:
+    def _features(self, content: pd.DataFrame, text: np.ndarray | None) -> dict[str, torch.Tensor]:
+        numeric = (self._log_numeric(content) - self._numeric_mean) / (self._numeric_std + 1e-6)
+        features = {
+            "ingredients": _padded(content["ingredients"], self._ingredient_vocab),
+            "tags": _padded(content["tags"], self._tag_vocab),
+            "numeric": torch.from_numpy(numeric.astype(np.float32)),
+        }
+        if self.text:
+            features["text"] = torch.from_numpy(np.asarray(text, dtype=np.float32))
+        return features
+
+    def _encode_items(
+        self,
+        features: dict[str, torch.Tensor],
+        rows: torch.Tensor,
+        with_ids: bool = True,
+        id_keep: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         return self._item_tower(
-            rows,
-            self._ingredients[rows],
-            self._tags[rows],
-            self._numeric[rows],
+            rows if with_ids else None,
+            features["ingredients"][rows],
+            features["tags"][rows],
+            features["numeric"][rows],
+            features["text"][rows] if self.text else None,
+            id_keep,
         )
 
     # ---- training examples -----------------------------------------------------------------
@@ -176,6 +222,8 @@ class TwoTowerRecommender(Recommender):
     def fit(self, data: InteractionData, verbose: bool = True) -> TwoTowerRecommender:
         if data.item_content is None:
             raise ValueError("two_tower needs recipe content: call data.with_content(recipes)")
+        if self.text and data.item_text is None:
+            raise ValueError("two_tower:text=1 needs text embeddings: call data.with_text(vectors)")
         torch.manual_seed(self.seed)
         rng = np.random.default_rng(self.seed)
 
@@ -184,15 +232,22 @@ class TwoTowerRecommender(Recommender):
             if self.device == "auto"
             else self.device
         )
-        self._item_features(data.item_content)
+        self._dev = dev
+        self._fit_features(data.item_content)
         # Item features are small (~40k rows): keep them on the training device.
-        self._ingredients, self._tags, self._numeric = (
-            t.to(dev) for t in (self._ingredients, self._tags, self._numeric)
-        )
+        features = {
+            k: v.to(dev) for k, v in self._features(data.item_content, data.item_text).items()
+        }
         histories, targets, self._last_history = self._histories(data)
 
+        n_text = features["text"].shape[1] if self.text else 0
         self._item_tower = _ItemTower(
-            data.n_items, *self._n_vocab, self._numeric.shape[1], self.dim, bool(self.content)
+            data.n_items,
+            *self._n_vocab,
+            features["numeric"].shape[1],
+            self.dim,
+            bool(self.content),
+            n_text,
         ).to(dev)
         self._user_tower = _UserTower(data.n_items, self.dim).to(dev)
         params = [*self._item_tower.parameters(), *self._user_tower.parameters()]
@@ -211,7 +266,10 @@ class TwoTowerRecommender(Recommender):
                 idx = order[b : b + self.batch_size]
                 target = targets_t[idx].to(dev)
                 user_vec = self._user_tower(histories_t[idx].to(dev))
-                item_vec = self._encode_items(target)
+                id_keep = None
+                if self.id_dropout > 0:
+                    id_keep = (torch.rand(len(idx), device=dev) >= self.id_dropout).float()
+                item_vec = self._encode_items(features, target, id_keep=id_keep)
 
                 logits = user_vec @ item_vec.T / self.temperature - log_q[target]
                 # The same recipe twice in a batch is not a negative for itself.
@@ -230,23 +288,39 @@ class TwoTowerRecommender(Recommender):
                     f"({time.perf_counter() - start:.0f}s on {dev})"
                 )
 
-        self._precompute(data, dev)
+        self._precompute(features, data, dev)
         return self
 
     @torch.no_grad()
-    def _precompute(self, data: InteractionData, dev: torch.device, chunk: int = 4096) -> None:
-        self._item_tower.eval()
-        self._user_tower.eval()
-        self._item_vectors = (
+    def _item_vectors_for(
+        self, features: dict[str, torch.Tensor], n: int, with_ids: bool, chunk: int = 4096
+    ) -> np.ndarray:
+        dev = features["numeric"].device
+        return (
             torch.cat(
                 [
-                    self._encode_items(torch.arange(s, min(s + chunk, data.n_items), device=dev))
-                    for s in range(0, data.n_items, chunk)
+                    self._encode_items(
+                        features, torch.arange(s, min(s + chunk, n), device=dev), with_ids
+                    )
+                    for s in range(0, n, chunk)
                 ]
             )
             .cpu()
             .numpy()
         )
+
+    @torch.no_grad()
+    def _precompute(
+        self,
+        features: dict[str, torch.Tensor],
+        data: InteractionData,
+        dev: torch.device,
+        chunk: int = 4096,
+    ) -> None:
+        self._item_tower.eval()
+        self._user_tower.eval()
+        self._item_vectors = self._item_vectors_for(features, data.n_items, with_ids=True)
+        self._pool_cache: tuple[ItemPool, np.ndarray] | None = None
         last = torch.from_numpy(self._last_history)
         self._user_vectors = (
             torch.cat(
@@ -258,3 +332,14 @@ class TwoTowerRecommender(Recommender):
 
     def score(self, user_rows: np.ndarray) -> np.ndarray:
         return self._user_vectors[user_rows] @ self._item_vectors.T
+
+    def score_items(self, user_rows: np.ndarray, pool: ItemPool) -> np.ndarray:
+        """Recipes without a trained id are encoded from content (and text) only."""
+        if not self.content and not self.text:
+            raise NotImplementedError("two_tower without content or text cannot score new recipes")
+        if self._pool_cache is None or self._pool_cache[0] is not pool:
+            features = {
+                k: v.to(self._dev) for k, v in self._features(pool.content, pool.text).items()
+            }
+            self._pool_cache = (pool, self._item_vectors_for(features, len(pool), with_ids=False))
+        return self._user_vectors[user_rows] @ self._pool_cache[1].T

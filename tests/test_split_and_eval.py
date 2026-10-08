@@ -198,3 +198,44 @@ def test_newest_scores_by_submission_date():
     model = NewestRecommender().fit(train)
     [ranked] = top_k(model.score_items(np.array([0]), pool), k=3)
     assert pool.item_ids[ranked].tolist() == ["N2", "N1", "X"]
+
+
+def test_two_tower_scores_new_recipes_from_content():
+    pytest.importorskip("torch")
+    from recipe_recsys.data import NUTRITION_COLUMNS
+    from recipe_recsys.dataset import ItemPool
+    from recipe_recsys.models.two_tower import TwoTowerRecommender
+
+    rows = []
+    for u in range(40):
+        first, second = ("A", "B") if u % 2 == 0 else ("C", "D")
+        rows += [(u, first, 0), (u, second, 1)]
+    rows.append((99, "A", 0))
+    df = pd.DataFrame(rows, columns=["user_id", "recipe_id", "day"])
+    df["date"] = pd.Timestamp(0) + pd.to_timedelta(df.pop("day"), "D")
+    data = InteractionData.from_frame(df)
+
+    def content(ids, ingredients, tags):
+        frame = pd.DataFrame({"recipe_id": ids, "ingredients": ingredients, "tags": tags})
+        for col in [*NUTRITION_COLUMNS, "minutes", "n_steps", "n_ingredients"]:
+            frame[col] = 1.0
+        return frame
+
+    data.with_content(
+        content(
+            list("ABCD"),
+            [["egg"], ["flour"], ["rice"], ["beans"]],
+            [["breakfast"], ["baking"], ["dinner"], ["dinner"]],
+        )
+    )
+    data.with_text(np.eye(4, dtype=np.float32))
+    # Two recipes never seen in training: one looks like B, the other like D.
+    pool_content = content(["newB", "newD"], [["flour"], ["beans"]], [["baking"], ["dinner"]])
+    pool = ItemPool(pool_content["recipe_id"].to_numpy(), pool_content, np.eye(4)[[1, 3]])
+
+    model = TwoTowerRecommender(
+        dim=8, epochs=60, batch_size=16, lr=0.01, min_token_count=1, text=1, id_dropout=0.5
+    )
+    model.fit(data, verbose=False)
+    [scores] = model.score_items(np.array([data.user_index[99]]), pool)
+    assert scores[0] > scores[1]

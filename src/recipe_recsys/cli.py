@@ -23,7 +23,7 @@ from recipe_recsys.evaluate import (
     results_table,
     to_dict,
 )
-from recipe_recsys.models import build_model, get_model_class
+from recipe_recsys.models import Recommender, build_model
 from recipe_recsys.restrictions import RESTRICTIONS, allowed_mask, get_restrictions
 from recipe_recsys.split import k_core, temporal_split
 from recipe_recsys.text import DEFAULT_MODEL as DEFAULT_TEXT_MODEL
@@ -58,10 +58,10 @@ def _allowed_for(
 
 
 def _text_lookup(
-    recipes: pd.DataFrame, specs: list[str]
+    recipes: pd.DataFrame, models: list[Recommender]
 ) -> Callable[[np.ndarray], np.ndarray] | None:
     """recipe ids -> text embeddings, loaded only if one of the models needs them."""
-    if not any(get_model_class(spec.partition(":")[0]).needs_text for spec in specs):
+    if not any(model.needs_text for model in models):
         return None
     ids = recipes["recipe_id"].to_numpy()
     vectors = load_text_embeddings(ids)
@@ -89,7 +89,8 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     recipes = data.load_recipes(columns=CONTENT_COLUMNS)
     train = InteractionData.from_frame(k_core(train_df, args.min_user, args.min_item))
     train.with_content(recipes)
-    text = _text_lookup(recipes, args.models)
+    models = [build_model(spec) for spec in args.models]
+    text = _text_lookup(recipes, models)
     if text is not None:
         train.with_text(text(train.item_ids))
     allowed = _allowed_for(train.item_ids, recipes, args.restrict)
@@ -139,8 +140,8 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
 
     ks = tuple(args.k)
     results, cold_results = [], []
-    for spec in args.models:
-        model = build_model(spec).fit(train)
+    for model in models:
+        model.fit(train)
         if "warm" in args.slice:
             results.append(evaluate(model, train, truth, ks=ks, allowed=allowed))
             _print_result(results[-1], ks, allowed)
@@ -192,7 +193,8 @@ def cmd_recommend(args: argparse.Namespace) -> None:
     recipes = data.load_recipes().set_index("recipe_id")
     train = InteractionData.from_frame(k_core(interactions, args.min_user, args.min_item))
     train.with_content(recipes.reset_index()[CONTENT_COLUMNS])
-    text = _text_lookup(recipes.reset_index(), [args.model])
+    model = build_model(args.model)
+    text = _text_lookup(recipes.reset_index(), [model])
     if text is not None:
         train.with_text(text(train.item_ids))
 
@@ -207,7 +209,7 @@ def cmd_recommend(args: argparse.Namespace) -> None:
 
     restrict_df = recipes.reset_index()
     allowed = _allowed_for(train.item_ids, restrict_df, args.restrict)
-    model = build_model(args.model).fit(train)
+    model.fit(train)
     [recs] = recommend(model, train, np.array([row]), args.n, allowed)
 
     label = f" (restrictions: {', '.join(args.restrict)})" if args.restrict else ""
