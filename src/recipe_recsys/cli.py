@@ -122,6 +122,14 @@ def cmd_search(args: argparse.Namespace) -> None:
         print(f"  {rank:2}. {row.name}  [{row.minutes} min]  ({ingredients})")
 
 
+def cmd_serve(args: argparse.Namespace) -> None:
+    import uvicorn
+
+    from recipe_recsys.api import create_app, load_state
+
+    uvicorn.run(create_app(load_state(args.llm)), host=args.host, port=args.port)
+
+
 def cmd_eval_search(args: argparse.Namespace) -> None:
     queries = load_queries(Path(args.queries))
     report = evaluate_search(queries, OllamaParser(args.llm), _searcher())
@@ -419,6 +427,12 @@ def main() -> None:
         "--no-llm", action="store_true", help="skip the LLM: keyword restrictions + raw text"
     )
     se.set_defaults(func=cmd_search)
+
+    sv = sub.add_parser("serve", help="HTTP API and web app (needs the `api` extra)")
+    sv.add_argument("--host", default="127.0.0.1")
+    sv.add_argument("--port", type=int, default=8000)
+    sv.add_argument("--llm", default=DEFAULT_LLM)
+    sv.set_defaults(func=cmd_serve)
 
     es = sub.add_parser("eval-search", help="evaluate search parsing on labeled requests")
     es.add_argument("--queries", default=str(DEFAULT_QUERIES))

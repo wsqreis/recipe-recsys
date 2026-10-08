@@ -13,8 +13,8 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-      # CPU PyTorch so the two-tower tests run; the `text` extra is not needed by the tests.
-      - run: uv sync --frozen --extra cpu
+      # CPU PyTorch for the two-tower tests, FastAPI for the API tests; `text` is not needed.
+      - run: uv sync --frozen --extra cpu --extra api
       - run: uv run ruff check src tests
       - run: uv run ruff format --check src tests
       - run: uv run pytest -q

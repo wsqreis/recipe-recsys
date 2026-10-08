@@ -22,11 +22,11 @@ WORKDIR /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --frozen --no-install-project --extra ${TORCH} --extra text
+    uv sync --frozen --no-install-project --extra ${TORCH} --extra text --extra api
 
 COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --extra ${TORCH} --extra text
+    uv sync --frozen --extra ${TORCH} --extra text --extra api
 
 ENTRYPOINT ["recsys"]
 CMD ["--help"]

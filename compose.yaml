@@ -18,6 +18,13 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # Web app + API on http://localhost:8000 (`docker compose up app`).
+  app:
+    extends: recsys
+    command: ["serve", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+
   recsys-gpu:
     extends: recsys
     build:

@@ -235,6 +235,11 @@ class RecipeSearch:
         self.encode = encode
         self.masks = masks
         self._ingredient_text = self.recipes["ingredients"].map(" | ".join).str.lower()
+        self._index = pd.Index(self.recipes["recipe_id"])
+
+    def positions(self, recipe_ids: np.ndarray) -> np.ndarray:
+        """Row of each recipe id in this searcher (and in its masks)."""
+        return self._index.get_indexer(recipe_ids)
 
     def allowed(self, parsed: ParsedQuery) -> np.ndarray:
         keep = np.ones(len(self.recipes), dtype=bool)
