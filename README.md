@@ -10,7 +10,7 @@ Data: [Food.com Recipes and Interactions](https://www.kaggle.com/datasets/shuyan
 |---|---|---|
 | 1 | Data pipeline, temporal split, baselines, metrics, dietary restriction filter | ✅ |
 | 2 | Collaborative filtering with embeddings (iALS, two-tower) and ablations | ✅ |
-| 3 | Content embeddings for cold start (new recipes ✅, new users next), natural-language search with a local LLM ✅, measuring the restriction filter, weekly meal planning | ⏳ |
+| 3 | Content embeddings for cold start (new recipes ✅, new users next), natural-language search with a local LLM ✅, measuring the restriction filter ✅, weekly meal planning | ⏳ |
 | 4 | API (FastAPI), vector index, deployment, demo (Docker image already available) | ⏳ |
 
 ## Running
@@ -194,7 +194,27 @@ Design decisions:
 - **Markers only apply to their own restriction.** "Gluten-free almond flour" is allowed for gluten and still blocked for nuts. "Non-dairy" is **not** a marker: in the US, a "non-dairy" product may contain caseinate (milk protein).
 - **Audited against the dataset itself.** Listing the most frequent ingredients each filter allows revealed real failures in the first version: `baguette`, `hamburger buns` and `cream of mushroom soup` passed the gluten filter, and `crabmeat` and `catfish` passed the vegetarian one (compound words escape word boundaries). Each failure became a regression test in [tests/test_restrictions.py](tests/test_restrictions.py).
 
-**Important limitation:** the "violations=0" check in the evaluation uses the same filter to audit itself, so it is a consistency check, not a proof of safety. Keywords cannot see ingredients hidden inside processed products. A real product would need curated ingredient data and a labeled set to measure the filter's precision and recall. This is planned for phase 3, compared against an LLM-based classifier.
+**Important limitation:** the "violations=0" check in the evaluation uses the same filter to audit itself, so it is a consistency check, not a proof of safety. Phase 3 measured the filter against independent labels (next section): it lets through about 3% of unsafe (recipe, restriction) pairs.
+
+### Measuring the filter (phase 3)
+
+Two random samples of 150 recipes were labeled forbidden / allowed / uncertain for each restriction, following a [written policy](evaluation/restriction_labeling.md) (judge each ingredient by its typical US commercial form). **The labels were made by an LLM (Claude), from the ingredient lists, with no human review**, before running the filter or the classifier on them. The second sample was labeled and committed before any change to the filter. Uncertain pairs (e.g. "tortillas" for gluten: corn or wheat?) are excluded. The positive class is "forbidden", so recall is the safety metric.
+
+| classifier | held-out sample: recall (safety) | precision | unsafe pairs missed |
+|---|---|---|---|
+| keywords, v1 | 97.4% [95.8%, 98.9%] | 100% | 12 of 457 |
+| keywords, v2 | 97.4% [95.8%, 98.9%] | 100% | 12 of 457 |
+| LLM classifier (ministral-3:8b) | 97.4% [95.8%, 98.9%] | 83.3% | 12 of 457 |
+| **keywords + LLM** (forbidden if either says so) | **100%** [100%, 100%] | 83.7% | **0 of 457** |
+
+`recsys eval-restrictions`; reports: [v1 on the first sample](reports/restrictions_v1.md), [v1 held-out](reports/restrictions_v1_holdout.md), [v2 held-out](reports/restrictions_v2_holdout.md).
+
+What this shows:
+
+1. **Fixing what you have seen does not generalize.** v2 adds every word the filter missed on the first sample (`hamburger`, singular `breadcrumb`, `sherbet`, `ravioli`, `ranch dressing`, ...). On that sample, recall jumps from 95.6% to 99.8% ([report](reports/restrictions_v2.md)). On the held-out sample it does not move: its misses are other processed products (caesar dressing, marshmallows, Jell-O, pumpernickel, corn flakes with malt, corn muffin mix with lard). The vocabulary of processed foods has a long tail. Measured only on the first sample, the filter would have been reported at 99.8%.
+2. **The 8B LLM is not a better filter.** It has the same recall as the keywords but much worse precision: on the held-out sample it blocks 54 of the 78 vegetarian recipes, apparently treating dairy and eggs as meat. On the first sample it also missed trivial cases (a beef steak as vegan, pancakes with flour as gluten-free).
+3. **They fail in different places, so the union works.** Keywords know the obvious ingredients and miss processed products; the LLM knows processed products and misses the obvious. Together: 0 unsafe pairs missed on the held-out sample, at the cost of hiding about one in five safe pairs. For a severe allergy, that trade is defensible; the union is not wired into the recommender yet.
+4. **Limits.** 457 forbidden pairs is a small sample (the 100% has a real failure rate above zero), and the labels come from a model following a policy, not from a dietitian or from product labels.
 
 ## Project layout
 
@@ -207,11 +227,13 @@ src/recipe_recsys/
   text.py           sentence embeddings of recipe text (cached)
   search.py         natural-language search: LLM parse (Ollama) + retrieval + hard filters
   search_eval.py    parsing and safety metrics on labeled requests (evaluation/)
+  restriction_eval.py  restriction filter vs labeled recipes, with an LLM classifier
   metrics.py        recall, ndcg, hit rate, coverage
   evaluate.py       evaluation protocol, slices, masking, top-k, bootstrap intervals
   models/           random, popularity, recent_popularity, newest, itemknn, ials,
                     text_profile, two_tower
   cli.py            recsys prepare | embed | evaluate | recommend | search | eval-search
+                    | eval-restrictions
 tests/              metrics, leak-free split, restrictions and regressions
 reports/            evaluation results (.md versioned, .json ignored)
 ```
