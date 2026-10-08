@@ -155,14 +155,16 @@ What this shows:
 
 ```bash
 # Ollama must be running on the host with the model pulled: `ollama pull ministral-3:8b`
-docker compose run --rm recsys search "algo sem lactose, com frango, em 20 min"
+docker compose run --rm recsys search "something dairy-free with chicken, ready in 20 minutes"
 ```
 
 ```
-parsed: {"restrictions": ["lactose"], "include": ["chicken"], "exclude": [], "max_minutes": 20, "query": "quick chicken dish"}
-   1. easy sweet and sour chicken  [20 min]  (chicken breast, brown sugar, pineapple chunks, vinegar, soy sauce, cornstarch)
+parsed: {"restrictions": ["lactose"], "include": ["chicken"], "exclude": [], "max_minutes": 20, "query": "quick dairy-free chicken dish"}
+   1. dairy free cream of chicken  [20 min]  (chicken broth, almond milk, flour, salt, pepper, parsley, ...)
    2. quick   easy chicken in wine sauce  [17 min]  (boneless skinless chicken breasts, olive oil, green onions, garlic, ...)
 ```
+
+Requests can also be written in other languages: the LLM translates them, and the evaluation sets below mix English and Portuguese requests on purpose.
 
 How it works:
 
@@ -185,7 +187,7 @@ Reports: [search_v1](reports/search_v1.md), [search_v1_holdout](reports/search_v
 
 What this shows:
 
-1. **The LLM understands what keywords cannot.** "I don't eat animal products", "nada de laticínios" and "my son can't have milk" have no fixed phrase to match. Keywords alone missed a third of the held-out restrictions.
+1. **The LLM understands what keywords cannot.** "I don't eat animal products", "nada de laticínios" (Portuguese for "no dairy at all") and "my son can't have milk" have no fixed phrase to match. Keywords alone missed a third of the held-out restrictions.
 2. **The dangerous failure looks reasonable.** All 8 unsafe results in v1 came from one request, "algo leve, não como carne" (I don't eat meat), parsed as "exclude the ingredient *meat*". Chicken passed the filter. v2's category rule closes this without relying on the LLM getting it right.
 3. **The LLM also errs the other way.** On the held-out set, v1 turned "no butter" into lactose intolerance, "no pork" into vegetarian and "omelet without onion" into egg-free. Those are safe but hide what the user asked for. A prompt rule ("leaving out one ingredient is not a restriction") cut them from 3 to 1.
 4. **Measured honestly.** The v2 changes came from reading v1's errors on the development set, so v2 numbers on that set (100% recall, 0 violations, [search_v2](reports/search_v2.md)) are optimistic. The held-out set was written and committed before changing the parser, and is the number to trust. It is small (30 requests), so it shows the direction, not a guarantee.

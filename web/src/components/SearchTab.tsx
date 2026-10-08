@@ -4,9 +4,9 @@ import { restrictionLabel } from '../text'
 import { RecipeCard } from './RecipeCard'
 
 const EXAMPLES = [
-  'algo sem lactose, com frango, em 20 min',
+  'something dairy-free with chicken, ready in 20 minutes',
   'vegan chocolate cake, no nuts please',
-  'sopa de legumes sem cogumelo pronta em meia hora',
+  'vegetable soup without mushrooms in half an hour',
   "I can't have milk or eggs, what can I bake?",
 ]
 

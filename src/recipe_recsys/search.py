@@ -1,6 +1,6 @@
 """Natural-language recipe search: an LLM parses the request, rules enforce it.
 
-    "algo sem lactose, com frango, em 20 min"
+    "something dairy-free with chicken, ready in 20 minutes"
         -> LLM (local, via Ollama) -> {"restrictions": ["lactose"], "include": ["chicken"],
                                        "max_minutes": 20, "query": "quick chicken dish"}
         -> semantic retrieval over recipe text embeddings, using `query`
@@ -58,6 +58,8 @@ SCHEMA = {
     "required": ["restrictions", "include", "exclude", "max_minutes", "query"],
 }
 
+# The Portuguese examples below are deliberate: they show the model how to handle
+# requests in another language. The evaluation numbers were measured with this prompt.
 SYSTEM_PROMPT = """\
 You turn a recipe request (in any language) into a JSON search query, in English.
 

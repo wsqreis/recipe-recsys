@@ -420,7 +420,7 @@ def main() -> None:
     ev.set_defaults(func=cmd_evaluate)
 
     se = sub.add_parser("search", help="natural-language recipe search (LLM parse + hard filters)")
-    se.add_argument("request", help='e.g. "algo sem lactose, com frango, em 20 min"')
+    se.add_argument("request", help='e.g. "something dairy-free with chicken, in 20 minutes"')
     se.add_argument("--n", type=int, default=10)
     se.add_argument("--llm", default=DEFAULT_LLM, help="Ollama model used to parse the request")
     se.add_argument(
